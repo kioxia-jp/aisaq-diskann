@@ -21,6 +21,7 @@ int main(int argc, char **argv)
     float B, M;
     bool append_reorder_data = false;
     bool use_opq = false;
+    bool use_aisaq = false;
 
     po::options_description desc{
         program_options_utils::make_program_description("build_disk_index", "Build a disk-based index.")};
@@ -78,6 +79,8 @@ int main(int argc, char **argv)
                                        "internally where each node has a maximum F labels.");
         optional_configs.add_options()("label_type", po::value<std::string>(&label_type)->default_value("uint"),
                                        program_options_utils::LABEL_TYPE_DESCRIPTION);
+        optional_configs.add_options()("use_aisaq", po::bool_switch()->default_value(false),
+                                       program_options_utils::USE_AISAQ);
 
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
@@ -94,6 +97,8 @@ int main(int argc, char **argv)
             append_reorder_data = true;
         if (vm["use_opq"].as<bool>())
             use_opq = true;
+        if (vm["use_aisaq"].as<bool>())
+            use_aisaq = true;
     }
     catch (const std::exception &ex)
     {
@@ -144,15 +149,15 @@ int main(int argc, char **argv)
             if (data_type == std::string("int8"))
                 return diskann::build_disk_index<int8_t>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                          metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                         universal_label, filter_threshold, Lf);
+                                                         universal_label, filter_threshold, Lf, use_aisaq);
             else if (data_type == std::string("uint8"))
                 return diskann::build_disk_index<uint8_t, uint16_t>(
                     data_path.c_str(), index_path_prefix.c_str(), params.c_str(), metric, use_opq, codebook_prefix,
-                    use_filters, label_file, universal_label, filter_threshold, Lf);
+                    use_filters, label_file, universal_label, filter_threshold, Lf, use_aisaq);
             else if (data_type == std::string("float"))
                 return diskann::build_disk_index<float, uint16_t>(
                     data_path.c_str(), index_path_prefix.c_str(), params.c_str(), metric, use_opq, codebook_prefix,
-                    use_filters, label_file, universal_label, filter_threshold, Lf);
+                    use_filters, label_file, universal_label, filter_threshold, Lf, use_aisaq);
             else
             {
                 diskann::cerr << "Error. Unsupported data type" << std::endl;
@@ -164,15 +169,15 @@ int main(int argc, char **argv)
             if (data_type == std::string("int8"))
                 return diskann::build_disk_index<int8_t>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                          metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                         universal_label, filter_threshold, Lf);
+                                                         universal_label, filter_threshold, Lf, use_aisaq);
             else if (data_type == std::string("uint8"))
                 return diskann::build_disk_index<uint8_t>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                           metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                          universal_label, filter_threshold, Lf);
+                                                          universal_label, filter_threshold, Lf, use_aisaq);
             else if (data_type == std::string("float"))
                 return diskann::build_disk_index<float>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                         metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                        universal_label, filter_threshold, Lf);
+                                                        universal_label, filter_threshold, Lf, use_aisaq);
             else
             {
                 diskann::cerr << "Error. Unsupported data type" << std::endl;

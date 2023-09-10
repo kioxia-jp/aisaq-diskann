@@ -1078,11 +1078,229 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
     diskann::cout << "Output disk index file written to " << output_file << std::endl;
 }
 
+template <typename T>
+void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string pq_compressed_file, const std::string output_file)
+{
+    // re-ordering is not supported
+
+    uint32_t npts, ndims;
+
+    // amount to read or write in one shot
+    size_t read_blk_size = 64 * 1024 * 1024;
+    size_t write_blk_size = read_blk_size;
+    cached_ifstream base_reader(base_file, read_blk_size);
+    base_reader.read((char *)&npts, sizeof(uint32_t));
+    base_reader.read((char *)&ndims, sizeof(uint32_t));
+
+    size_t npts_64, ndims_64;
+    npts_64 = npts;
+    ndims_64 = ndims;
+
+    // create cached reader + writer
+    size_t actual_file_size = get_file_size(mem_index_file);
+    diskann::cout << "Vamana index file size=" << actual_file_size << std::endl;
+    std::ifstream vamana_reader(mem_index_file, std::ios::binary);
+    std::ifstream pq_comp_reader(pq_compressed_file, std::ios::binary);
+    cached_ofstream diskann_writer(output_file, write_blk_size);
+
+    // metadata: width, medoid
+    uint32_t width_u32, medoid_u32;
+    uint32_t num_points, num_pq_chunks_u32;
+    size_t index_file_size;
+
+    vamana_reader.read((char *)&index_file_size, sizeof(uint64_t));
+    if (index_file_size != actual_file_size)
+    {
+        std::stringstream stream;
+        stream << "Vamana Index file size does not match expected size per "
+                  "meta-data."
+               << " file size from file: " << index_file_size << " actual file size: " << actual_file_size << std::endl;
+
+        throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    uint64_t vamana_frozen_num = false, vamana_frozen_loc = 0;
+
+    vamana_reader.read((char *)&width_u32, sizeof(uint32_t));
+    vamana_reader.read((char *)&medoid_u32, sizeof(uint32_t));
+    vamana_reader.read((char *)&vamana_frozen_num, sizeof(uint64_t));
+
+    pq_comp_reader.read((char *)&num_points, sizeof(uint32_t));
+    pq_comp_reader.read((char *)&num_pq_chunks_u32, sizeof(uint32_t));
+
+    // compute
+    uint64_t medoid, max_node_len, nnodes_per_sector;
+    uint64_t num_pq_chunks;
+    npts_64 = (uint64_t)npts;
+    medoid = (uint64_t)medoid_u32;
+    num_pq_chunks = (uint64_t)num_pq_chunks_u32;
+    if (vamana_frozen_num == 1)
+        vamana_frozen_loc = medoid;
+
+    // raw vector, nnbrs, ids of neighbor vectors, pq compressed neighbor vectors
+    max_node_len = ndims_64 * sizeof(T) + sizeof(uint32_t) + (uint64_t)width_u32 * sizeof(uint32_t) + (uint64_t)width_u32 * num_pq_chunks * sizeof(uint8_t);
+    nnodes_per_sector = defaults::SECTOR_LEN / max_node_len; // 0 if max_node_len > SECTOR_LEN
+
+    diskann::cout << "medoid: " << medoid << "B" << std::endl;
+    diskann::cout << "max_node_len: " << max_node_len << "B" << std::endl;
+    diskann::cout << "nnodes_per_sector: " << nnodes_per_sector << "B" << std::endl;
+
+    // defaults::SECTOR_LEN buffer for each sector
+    std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(defaults::SECTOR_LEN);
+    std::unique_ptr<char[]> multisector_buf = std::make_unique<char[]>(ROUND_UP(max_node_len, defaults::SECTOR_LEN));
+    std::unique_ptr<char[]> node_buf = std::make_unique<char[]>(max_node_len);
+    uint32_t &nnbrs = *(uint32_t *)(node_buf.get() + ndims_64 * sizeof(T));
+    uint32_t *nhood_buf = (uint32_t *)(node_buf.get() + (ndims_64 * sizeof(T)) + sizeof(uint32_t));
+
+    // number of sectors (1 for meta data)
+    uint64_t n_sectors = nnodes_per_sector > 0 ? ROUND_UP(npts_64, nnodes_per_sector) / nnodes_per_sector
+                                               : npts_64 * DIV_ROUND_UP(max_node_len, defaults::SECTOR_LEN);
+    uint64_t n_data_nodes_per_sector = 0;
+    uint64_t disk_index_file_size = (n_sectors + 1) * defaults::SECTOR_LEN;
+
+    std::vector<uint64_t> output_file_meta;
+    output_file_meta.push_back(npts_64);
+    output_file_meta.push_back(ndims_64);
+    output_file_meta.push_back(medoid);
+    output_file_meta.push_back(max_node_len);
+    output_file_meta.push_back(nnodes_per_sector);
+    output_file_meta.push_back(vamana_frozen_num);
+    output_file_meta.push_back(vamana_frozen_loc);
+    output_file_meta.push_back(uint64_t(0));
+    output_file_meta.push_back(disk_index_file_size);
+    output_file_meta.push_back(num_pq_chunks);
+
+    // output_file_metaを書き込むためのスペースに適当な値を書き込み。実際の書き込みは最後にdiskann::save_binで実施。
+    // ここで実際の値を書き込まないのは、途中でエラーが発生したときにヘッダは正しいが中身が壊れたファイルを生成しないようにするため？
+    diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+
+    std::unique_ptr<T[]> cur_node_coords = std::make_unique<T[]>(ndims_64);
+    diskann::cout << "# sectors: " << n_sectors << std::endl;
+    uint64_t cur_node_id = 0;
+
+    // read pq compressed data
+    uint8_t *pq_comp_data = nullptr;
+    diskann::load_bin<uint8_t>(pq_compressed_file, pq_comp_data, npts_64, num_pq_chunks);
+
+    if (nnodes_per_sector > 0)
+    { // Write multiple nodes per sector
+        for (uint64_t sector = 0; sector < n_sectors; sector++)
+        {
+            if (sector % 100000 == 0)
+            {
+                diskann::cout << "Sector #" << sector << "written" << std::endl;
+            }
+            memset(sector_buf.get(), 0, defaults::SECTOR_LEN);
+            for (uint64_t sector_node_id = 0; sector_node_id < nnodes_per_sector && cur_node_id < npts_64;
+                 sector_node_id++)
+            {
+                memset(node_buf.get(), 0, max_node_len);
+                // read cur node's nnbrs
+                vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
+
+                // sanity checks on nnbrs
+                assert(nnbrs > 0);
+                assert(nnbrs <= width_u32);
+
+                // read node's nhood
+                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t)); // nnbrsで良いのでは？
+                if (nnbrs > width_u32)
+                {
+                    diskann::cout << "ここには来ないはず？" << std::endl;
+                    vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
+                }
+
+                // write coords of node first
+                //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
+                base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+                memcpy(node_buf.get(), cur_node_coords.get(), ndims_64 * sizeof(T));
+
+                // write nnbrs
+                *(uint32_t *)(node_buf.get() + ndims_64 * sizeof(T)) = (std::min)(nnbrs, width_u32);
+
+                // write nhood id
+                memcpy(node_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t), nhood_buf,
+                       (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+
+                // write nhood vectors
+                for (uint64_t pq_i = 0; pq_i < (std::min)(nnbrs, width_u32); pq_i++)
+                {
+                memcpy(node_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t) + (std::min)(nnbrs, width_u32) * sizeof(uint32_t) + pq_i * num_pq_chunks * sizeof(uint8_t),
+                       pq_comp_data + *(nhood_buf + pq_i) * sizeof(uint8_t) * num_pq_chunks,
+                       num_pq_chunks * sizeof(uint8_t));
+                }
+
+                // get offset into sector_buf
+                char *sector_node_buf = sector_buf.get() + (sector_node_id * max_node_len);
+
+                // copy node buf into sector_node_buf
+                memcpy(sector_node_buf, node_buf.get(), max_node_len);
+                cur_node_id++;
+            }
+            // flush sector to disk
+            diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
+        }
+    }
+    else
+    { // Write multi-sector nodes
+        uint64_t nsectors_per_node = DIV_ROUND_UP(max_node_len, defaults::SECTOR_LEN);
+        for (uint64_t i = 0; i < npts_64; i++)
+        {
+            if ((i * nsectors_per_node) % 100000 == 0)
+            {
+                diskann::cout << "Sector #" << i * nsectors_per_node << "written" << std::endl;
+            }
+            memset(multisector_buf.get(), 0, nsectors_per_node * defaults::SECTOR_LEN);
+
+            memset(node_buf.get(), 0, max_node_len);    // 必要ない気がする
+            // read cur node's nnbrs
+            vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
+
+            // sanity checks on nnbrs
+            assert(nnbrs > 0);
+            assert(nnbrs <= width_u32);
+
+            // read node's nhood
+            vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t)); // nnbrsで良いのでは？
+            if (nnbrs > width_u32)
+            {
+                diskann::cout << "ここには来ないはず？" << std::endl;
+                vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
+            }
+
+            // write coords of node first
+            //  T *node_coords = data + ((uint64_t) ndims_64 * cur_node_id);
+            base_reader.read((char *)cur_node_coords.get(), sizeof(T) * ndims_64);
+            memcpy(multisector_buf.get(), cur_node_coords.get(), ndims_64 * sizeof(T));
+
+            // write nnbrs
+            *(uint32_t *)(multisector_buf.get() + ndims_64 * sizeof(T)) = (std::min)(nnbrs, width_u32);
+
+            // write nhood next
+            memcpy(multisector_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t), nhood_buf,
+                   (std::min)(nnbrs, width_u32) * sizeof(uint32_t));
+
+            //read node's neighbors' pq vectors
+            for (uint64_t pq_i = 0; pq_i < (std::min)(nnbrs, width_u32); pq_i++)
+            {
+                memcpy(multisector_buf.get() + ndims_64 * sizeof(T) + sizeof(uint32_t) + width_u32 * sizeof(uint32_t) + pq_i * num_pq_chunks * sizeof(uint8_t),
+                       pq_comp_data + *(nhood_buf + pq_i) * sizeof(uint8_t) * num_pq_chunks,
+                       num_pq_chunks * sizeof(uint8_t));
+            }
+
+            // flush sector to disk
+            diskann_writer.write(multisector_buf.get(), nsectors_per_node * defaults::SECTOR_LEN);
+        }
+    }
+    diskann_writer.close();
+    diskann::save_bin<uint64_t>(output_file, output_file_meta.data(), output_file_meta.size(), 1, 0);
+    diskann::cout << "Output disk index file written to " << output_file << std::endl;
+}
+
 template <typename T, typename LabelT>
 int build_disk_index(const char *dataFilePath, const char *indexFilePath, const char *indexBuildParameters,
                      diskann::Metric compareMetric, bool use_opq, const std::string &codebook_prefix, bool use_filters,
                      const std::string &label_file, const std::string &universal_label, const uint32_t filter_threshold,
-                     const uint32_t Lf)
+                     const uint32_t Lf, bool use_aisaq)
 {
     std::stringstream parser;
     parser << std::string(indexBuildParameters);
@@ -1159,6 +1377,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     std::string pq_compressed_vectors_path = index_prefix_path + "_pq_compressed.bin";
     std::string mem_index_path = index_prefix_path + "_mem.index";
     std::string disk_index_path = index_prefix_path + "_disk.index";
+    std::string aisaq_index_path = index_prefix_path + "_aisaq.index";
     std::string medoids_path = disk_index_path + "_medoids.bin";
     std::string centroids_path = disk_index_path + "_centroids.bin";
 
@@ -1294,6 +1513,10 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     diskann::cout << timer.elapsed_seconds_for_step("building merged vamana index") << std::endl;
 
     timer.reset();
+    if (use_aisaq)
+    {
+        diskann::create_aisaq_layout<T>(data_file_to_use.c_str(), mem_index_path, pq_compressed_vectors_path, aisaq_index_path);
+    }
     if (!use_disk_pq)
     {
         diskann::create_disk_layout<T>(data_file_to_use.c_str(), mem_index_path, disk_index_path);
@@ -1304,7 +1527,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
             diskann::create_disk_layout<uint8_t>(disk_pq_compressed_vectors_path, mem_index_path, disk_index_path);
         else
             diskann::create_disk_layout<uint8_t>(disk_pq_compressed_vectors_path, mem_index_path, disk_index_path,
-                                                 data_file_to_use.c_str());
+                                                data_file_to_use.c_str());
     }
     diskann::cout << timer.elapsed_seconds_for_step("generating disk layout") << std::endl;
 
@@ -1327,7 +1550,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
         std::remove(labels_file_to_use.c_str());
     }
 
-    std::remove(mem_index_path.c_str());
+    // std::remove(mem_index_path.c_str());
     if (use_disk_pq)
         std::remove(disk_pq_compressed_vectors_path.c_str());
 
@@ -1349,6 +1572,10 @@ template DISKANN_DLLEXPORT void create_disk_layout<uint8_t>(const std::string ba
 template DISKANN_DLLEXPORT void create_disk_layout<float>(const std::string base_file, const std::string mem_index_file,
                                                           const std::string output_file,
                                                           const std::string reorder_data_file);
+
+template DISKANN_DLLEXPORT void create_aisaq_layout<float>(const std::string base_file, const std::string mem_index_file,
+                                                           const std::string pq_compressed_file,
+                                                           const std::string output_file);
 
 template DISKANN_DLLEXPORT int8_t *load_warmup<int8_t>(const std::string &cache_warmup_file, uint64_t &warmup_num,
                                                        uint64_t warmup_dim, uint64_t warmup_aligned_dim);
@@ -1395,21 +1622,21 @@ template DISKANN_DLLEXPORT int build_disk_index<int8_t, uint32_t>(const char *da
                                                                   const std::string &codebook_prefix, bool use_filters,
                                                                   const std::string &label_file,
                                                                   const std::string &universal_label,
-                                                                  const uint32_t filter_threshold, const uint32_t Lf);
+                                                                  const uint32_t filter_threshold, const uint32_t Lf, bool use_aisaq);
 template DISKANN_DLLEXPORT int build_disk_index<uint8_t, uint32_t>(const char *dataFilePath, const char *indexFilePath,
                                                                    const char *indexBuildParameters,
                                                                    diskann::Metric compareMetric, bool use_opq,
                                                                    const std::string &codebook_prefix, bool use_filters,
                                                                    const std::string &label_file,
                                                                    const std::string &universal_label,
-                                                                   const uint32_t filter_threshold, const uint32_t Lf);
+                                                                   const uint32_t filter_threshold, const uint32_t Lf, bool use_aisaq);
 template DISKANN_DLLEXPORT int build_disk_index<float, uint32_t>(const char *dataFilePath, const char *indexFilePath,
                                                                  const char *indexBuildParameters,
                                                                  diskann::Metric compareMetric, bool use_opq,
                                                                  const std::string &codebook_prefix, bool use_filters,
                                                                  const std::string &label_file,
                                                                  const std::string &universal_label,
-                                                                 const uint32_t filter_threshold, const uint32_t Lf);
+                                                                 const uint32_t filter_threshold, const uint32_t Lf, bool use_aisaq);
 // LabelT = uint16
 template DISKANN_DLLEXPORT int build_disk_index<int8_t, uint16_t>(const char *dataFilePath, const char *indexFilePath,
                                                                   const char *indexBuildParameters,
@@ -1417,21 +1644,21 @@ template DISKANN_DLLEXPORT int build_disk_index<int8_t, uint16_t>(const char *da
                                                                   const std::string &codebook_prefix, bool use_filters,
                                                                   const std::string &label_file,
                                                                   const std::string &universal_label,
-                                                                  const uint32_t filter_threshold, const uint32_t Lf);
+                                                                  const uint32_t filter_threshold, const uint32_t Lf, bool use_aisaq);
 template DISKANN_DLLEXPORT int build_disk_index<uint8_t, uint16_t>(const char *dataFilePath, const char *indexFilePath,
                                                                    const char *indexBuildParameters,
                                                                    diskann::Metric compareMetric, bool use_opq,
                                                                    const std::string &codebook_prefix, bool use_filters,
                                                                    const std::string &label_file,
                                                                    const std::string &universal_label,
-                                                                   const uint32_t filter_threshold, const uint32_t Lf);
+                                                                   const uint32_t filter_threshold, const uint32_t Lf, bool use_aisaq);
 template DISKANN_DLLEXPORT int build_disk_index<float, uint16_t>(const char *dataFilePath, const char *indexFilePath,
                                                                  const char *indexBuildParameters,
                                                                  diskann::Metric compareMetric, bool use_opq,
                                                                  const std::string &codebook_prefix, bool use_filters,
                                                                  const std::string &label_file,
                                                                  const std::string &universal_label,
-                                                                 const uint32_t filter_threshold, const uint32_t Lf);
+                                                                 const uint32_t filter_threshold, const uint32_t Lf, bool use_aisaq);
 
 template DISKANN_DLLEXPORT int build_merged_vamana_index<int8_t, uint32_t>(
     std::string base_file, diskann::Metric compareMetric, uint32_t L, uint32_t R, double sampling_rate,

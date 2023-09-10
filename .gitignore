@@ -378,3 +378,8 @@ gperftools
 
 # Rust
 rust/target
+
+# Additional ignored files
+index/
+data/
+tmp*
