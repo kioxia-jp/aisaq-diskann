@@ -33,10 +33,15 @@ python python/scripts/check_aisaq_layout.py index/sift_learn
 prefix = sys.argv[1]
 
 SECTOR_LEN = 4096
-width_u32 = 32  # written in mem.index
 
-print('\ndisk.index')
-with open(f'{prefix}_aisaq.index', 'rb') as f_a:
+if len(sys.argv) == 2 or (len(sys.argv) == 3 and int(sys.argv[2]) == 0):
+    target_file_name = f'{prefix}_aisaq.index'
+elif (len(sys.argv) == 3 and int(sys.argv[2]) == 1):
+    target_file_name = f'{prefix}_aisaq_py.index'
+
+print(f'checking: {target_file_name}...')
+
+with open(target_file_name, 'rb') as f_a:
     with open(f'{prefix}_disk.index', 'rb') as f_d:
         num_meta_a = numpy.frombuffer(f_a.read(4), dtype=numpy.uint32)
         num_meta_d = numpy.frombuffer(f_d.read(4), dtype=numpy.uint32)
@@ -82,9 +87,11 @@ with open(f'{prefix}_aisaq.index', 'rb') as f_a:
         f_d.seek(SECTOR_LEN - f_d.tell(), os.SEEK_CUR)
 
         # read disk data
+        width = int((max_node_len_d[0] - ndims_d[0] * 4 - 4) // 4)   # T = float32前提, widthが他のファイルのヘッダに書いてあればそこから読んでも良い
+
         node_vectors_d = numpy.zeros((npts_d[0], ndims_d[0]), dtype=numpy.float32)
         node_nnbrs_d = numpy.zeros((npts_d[0]), dtype=numpy.uint32)
-        node_nbrs_id_d = numpy.zeros((npts_d[0], width_u32), dtype=numpy.uint32)
+        node_nbrs_id_d = numpy.zeros((npts_d[0], width), dtype=numpy.uint32)
         for k in range(int(disk_index_file_size_d[0] // disk_read_block_size_d) - 1):
             # print(f'# current position: {f_d.tell()}')
             for j in range(nnodes_per_sector_d[0]):
@@ -101,8 +108,8 @@ with open(f'{prefix}_aisaq.index', 'rb') as f_a:
         # read aisaq data
         node_vectors_a = numpy.zeros((npts_a[0], ndims_a[0]), dtype=numpy.float32)
         node_nnbrs_a = numpy.zeros((npts_a[0]), dtype=numpy.uint32)
-        node_nbrs_id_a = numpy.zeros((npts_d[0], width_u32), dtype=numpy.uint32)
-        node_nbrs_vec_a = numpy.zeros((npts_a[0], width_u32, num_pq_chunks_a[0]), dtype=numpy.uint8)
+        node_nbrs_id_a = numpy.zeros((npts_d[0], width), dtype=numpy.uint32)
+        node_nbrs_vec_a = numpy.zeros((npts_a[0], width, num_pq_chunks_a[0]), dtype=numpy.uint8)
         for k in range(int((disk_index_file_size_a[0] - SECTOR_LEN) // disk_read_block_size_a)):    # headerは4096B
             if nnodes_per_sector_a[0] == 0:
                 # print(f'# current position: {f_a.tell()}')
@@ -110,7 +117,7 @@ with open(f'{prefix}_aisaq.index', 'rb') as f_a:
                 nnbrs_a = numpy.frombuffer(f_a.read(4), dtype=numpy.uint32)
                 node_nnbrs_a[k] = nnbrs_a[0]
                 node_nbrs_id_a[k] = numpy.frombuffer(f_a.read(int(4 * nnbrs_a[0])), dtype=numpy.uint32)
-                node_nbrs_vec_a[k] = numpy.frombuffer(f_a.read(int(nnbrs_a[0] * num_pq_chunks_a[0])), dtype=numpy.uint8).reshape(width_u32, num_pq_chunks_a[0])
+                node_nbrs_vec_a[k] = numpy.frombuffer(f_a.read(int(nnbrs_a[0] * num_pq_chunks_a[0])), dtype=numpy.uint8).reshape(width, num_pq_chunks_a[0])
             else:
                 for j in range(nnodes_per_sector_a[0]):
                     if k * nnodes_per_sector_a[0] + j == npts_d[0]:
@@ -120,12 +127,17 @@ with open(f'{prefix}_aisaq.index', 'rb') as f_a:
                     # print(f'# current node: {k * nnodes_per_sector_d + j}, {nnbrs_d}')
                     node_nnbrs_a[int(k * nnodes_per_sector_a[0] + j)] = nnbrs_a[0]
                     node_nbrs_id_a[int(k * nnodes_per_sector_a[0] + j)] = numpy.frombuffer(f_a.read(int(4 * nnbrs_a[0])), dtype=numpy.uint32)
-                    node_nbrs_vec_a[int(k * nnodes_per_sector_a[0] + j)] = numpy.frombuffer(f_a.read(int(nnbrs_a[0] * num_pq_chunks_a[0])), dtype=numpy.uint8).reshape(width_u32, num_pq_chunks_a[0])
+                    node_nbrs_vec_a[int(k * nnodes_per_sector_a[0] + j)] = numpy.frombuffer(f_a.read(int(nnbrs_a[0] * num_pq_chunks_a[0])), dtype=numpy.uint8).reshape(width, num_pq_chunks_a[0])
 
             f_a.seek(SECTOR_LEN + (k+1) * disk_read_block_size_a - f_a.tell(), os.SEEK_CUR) # headerは4096B
 
         # print(node_vectors_d)
         # print(node_vectors_a)
+        for i, (v1, v2) in enumerate(zip(node_vectors_d, node_vectors_a)):
+            if not numpy.array_equal(v1, v2):
+                print(i, v1, v2)
+                raise ValueError
+
         assert numpy.array_equal(node_vectors_d, node_vectors_a)
         print(f'node vec: disk == aisaq: {numpy.array_equal(node_vectors_d, node_vectors_a)}')
 
@@ -140,7 +152,7 @@ with open(f'{prefix}_aisaq.index', 'rb') as f_a:
         print(f'nhood id: disk == aisaq: {numpy.array_equal(node_nbrs_id_d, node_nbrs_id_a)}')
 
 # print('\nmem.index')
-node_nbrs_id_ref = numpy.zeros((npts_d[0], width_u32), dtype=numpy.uint32)
+node_nbrs_id_ref = numpy.zeros((npts_d[0], width), dtype=numpy.uint32)
 with open(f'{prefix}_mem.index', 'rb') as f:
     numpy.frombuffer(f.read(8), dtype=numpy.uint64) # "index_file_size")
     numpy.frombuffer(f.read(4), dtype=numpy.uint32) # "width_u32")
@@ -166,9 +178,9 @@ with open(f'{prefix}_pq_compressed.bin', 'rb') as f:
     pq_comp_data = numpy.frombuffer(f.read(int(1 * npts_a[0] * num_pq_chunks_a[0])), dtype=numpy.uint8).reshape(npts_a[0], num_pq_chunks_a[0])
 
 
-node_nbrs_vec_ref = numpy.zeros((npts_a[0], width_u32, num_pq_chunks_a[0]), dtype=numpy.uint8)
+node_nbrs_vec_ref = numpy.zeros((npts_a[0], width, num_pq_chunks_a[0]), dtype=numpy.uint8)
 for i in range(npts_a[0]):
-    for j in range(width_u32):
+    for j in range(width):
         node_nbrs_vec_ref[i, j] = pq_comp_data[node_nbrs_id_ref[i, j]]
 
 # print(node_nbrs_vec_a)
