@@ -15,7 +15,7 @@ cp -a /vol1/user/daisuke/data/ann/sift1m/sift .
 # GT作成
 ./build/apps/utils/compute_groundtruth  --data_type float --dist_fn l2 --base_file data/sift/sift_learn.fbin --query_file data/sift/sift_query.fbin --gt_file data/sift/sift_query_learn_gt100 --K 100
 
-# テスト1 node size > sector size
+# テスト1 disk.indexのnode size < sector size かつ aisaq.indexのnode size > sector size
 ## インデックス作成（スクラッチから作成）
 rm -rf index/*
 ./build/apps/build_disk_index --data_type float --dist_fn l2 --data_path data/sift/sift_learn.fbin --index_path_prefix index/sift_learn -R 32 -L50 -B 0.012 -M 1 -T 16 --use_aisaq
@@ -26,8 +26,7 @@ python python/apps/create_aisaq_index_from_disk_index.py index/sift_learn
 ### チェック
 python python/scripts/check_aisaq_layout.py index/sift_learn 1
 
-
-# テスト2 node size < sector size
+# テスト2 disk.indexのnode size < sector size かつ aisaq.indexのnode size <= sector size
 ## インデックス作成（スクラッチから作成）
 rm -rf index/*
 ./build/apps/build_disk_index --data_type float --dist_fn l2 --data_path data/sift/sift_learn.fbin --index_path_prefix index/sift_learn -R 32 -L50 -B 0.003 -M 1 -T 16 --use_aisaq
@@ -37,6 +36,19 @@ python python/scripts/check_aisaq_layout.py index/sift_learn 0
 python python/apps/create_aisaq_index_from_disk_index.py index/sift_learn
 ### チェック
 python python/scripts/check_aisaq_layout.py index/sift_learn 1
+
+# テスト3 disk.indexのnode size > sector size (この時は必ずaisaq.indexのnode size > sector size）
+## データ準備
+python python/apps/npy_to_fbin.py data/kilt-e5_8b/subset_100000_1024.npy
+## インデックス作成（スクラッチから作成）
+rm -rf index/*
+./build/apps/build_disk_index --data_type float --dist_fn mips --data_path data/kilt-e5_8b/subset_100000_1024.fbin --index_path_prefix index/kilt-e5_8b -R 30 -L50 -B 1.029298 -M 16 -T 16 --use_aisaq
+### チェック
+python python/scripts/check_aisaq_layout.py index/kilt-e5_8b 0
+## インデックス作成（disk.indexから作成）
+python python/apps/create_aisaq_index_from_disk_index.py index/kilt-e5_8b
+### チェック
+python python/scripts/check_aisaq_layout.py index/kilt-e5_8b 1
 '''
 
 prefix = sys.argv[1]
@@ -89,8 +101,11 @@ with open(target_file_name, 'rb') as f_a:
         num_pq_chunks_a = numpy.frombuffer(f_a.read(8), dtype=numpy.uint64)
         print(f'num_pq_chunks: {num_pq_chunks_a}')
 
-        disk_read_block_size_a = int((max_node_len_a[0] // SECTOR_LEN) + (max_node_len_a[0] % SECTOR_LEN != 0)) * SECTOR_LEN 
-        disk_read_block_size_d = SECTOR_LEN
+        nsectors_per_node_a = int((max_node_len_a[0] // SECTOR_LEN) + (max_node_len_a[0] % SECTOR_LEN != 0))
+        nsectors_per_node_d = int((max_node_len_d[0] // SECTOR_LEN) + (max_node_len_d[0] % SECTOR_LEN != 0))
+
+        disk_read_block_size_a = nsectors_per_node_a * SECTOR_LEN 
+        disk_read_block_size_d = nsectors_per_node_d * SECTOR_LEN 
 
         f_a.seek(SECTOR_LEN - f_a.tell(), os.SEEK_CUR)  # headerは4096Bにする（必要なら後で修正。ただし結構面倒くさい）
         f_d.seek(SECTOR_LEN - f_d.tell(), os.SEEK_CUR)
@@ -101,18 +116,23 @@ with open(target_file_name, 'rb') as f_a:
         node_vectors_d = numpy.zeros((npts_d[0], ndims_d[0]), dtype=numpy.float32)
         node_nnbrs_d = numpy.zeros((npts_d[0]), dtype=numpy.uint32)
         node_nbrs_id_d = numpy.zeros((npts_d[0], width), dtype=numpy.uint32)
-        for k in range(int(disk_index_file_size_d[0] // disk_read_block_size_d) - 1):
-            # print(f'# current position: {f_d.tell()}')
-            for j in range(nnodes_per_sector_d[0]):
-                if k * nnodes_per_sector_d[0] + j == npts_d[0]:
-                    break
-                node_vectors_d[int(k * nnodes_per_sector_d[0] + j)] = numpy.frombuffer(f_d.read(int(4 * ndims_d[0])), dtype=numpy.float32)
+        for i in range(int((disk_index_file_size_d[0] - SECTOR_LEN) // disk_read_block_size_d)):
+            f_d.seek(SECTOR_LEN + i * disk_read_block_size_d)
+            if nnodes_per_sector_d[0] == 0:
+                node_vectors_d[i] = numpy.frombuffer(f_d.read(int(4 * ndims_d[0])), dtype=numpy.float32)
                 nnbrs_d = numpy.frombuffer(f_d.read(4), dtype=numpy.uint32)
-                # print(f'# current node: {k * nnodes_per_sector_d + j}, {nnbrs_d}')
-                node_nnbrs_d[int(k * nnodes_per_sector_d[0] + j)] = nnbrs_d[0]
-                node_nbrs_id_d[int(k * nnodes_per_sector_d[0] + j)] = numpy.frombuffer(f_d.read(int(4 * nnbrs_d[0])), dtype=numpy.uint32)
-
-            f_d.seek((k+2) * disk_read_block_size_d - f_d.tell(), os.SEEK_CUR)
+                # print(f'# current node: {i}, {nnbrs_d}')
+                node_nnbrs_d[i] = nnbrs_d[0]
+                node_nbrs_id_d[i,:nnbrs_d[0]] = numpy.frombuffer(f_d.read(int(4 * nnbrs_d[0])), dtype=numpy.uint32)
+            else:
+                for j in range(nnodes_per_sector_d[0]):
+                    if i * nnodes_per_sector_d[0] + j == npts_d[0]:
+                        break
+                    node_vectors_d[int(i * nnodes_per_sector_d[0] + j)] = numpy.frombuffer(f_d.read(int(4 * ndims_d[0])), dtype=numpy.float32)
+                    nnbrs_d = numpy.frombuffer(f_d.read(4), dtype=numpy.uint32)
+                    # print(f'# current node: {i * nnodes_per_sector_d + j}, {nnbrs_d}')
+                    node_nnbrs_d[int(i * nnodes_per_sector_d[0] + j)] = nnbrs_d[0]
+                    node_nbrs_id_d[int(i * nnodes_per_sector_d[0] + j)] = numpy.frombuffer(f_d.read(int(4 * nnbrs_d[0])), dtype=numpy.uint32)
 
         # read aisaq data
         node_vectors_a = numpy.zeros((npts_a[0], ndims_a[0]), dtype=numpy.float32)
@@ -125,8 +145,8 @@ with open(target_file_name, 'rb') as f_a:
                 node_vectors_a[k] = numpy.frombuffer(f_a.read(int(4 * ndims_a[0])), dtype=numpy.float32)
                 nnbrs_a = numpy.frombuffer(f_a.read(4), dtype=numpy.uint32)
                 node_nnbrs_a[k] = nnbrs_a[0]
-                node_nbrs_id_a[k] = numpy.frombuffer(f_a.read(int(4 * nnbrs_a[0])), dtype=numpy.uint32)
-                node_nbrs_vec_a[k] = numpy.frombuffer(f_a.read(int(nnbrs_a[0] * num_pq_chunks_a[0])), dtype=numpy.uint8).reshape(width, num_pq_chunks_a[0])
+                node_nbrs_id_a[k,:nnbrs_a[0]] = numpy.frombuffer(f_a.read(int(4 * nnbrs_a[0])), dtype=numpy.uint32)
+                node_nbrs_vec_a[k,:nnbrs_a[0]] = numpy.frombuffer(f_a.read(int(nnbrs_a[0] * num_pq_chunks_a[0])), dtype=numpy.uint8).reshape(nnbrs_a[0], num_pq_chunks_a[0])
             else:
                 for j in range(nnodes_per_sector_a[0]):
                     if k * nnodes_per_sector_a[0] + j == npts_d[0]:

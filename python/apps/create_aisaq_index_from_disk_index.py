@@ -47,6 +47,8 @@ print(f'num_pq_chunks_u32: {num_pq_chunks_u32}')
 disk_read_block_size = int((max_node_len[0] // SECTOR_LEN) + (max_node_len[0] % SECTOR_LEN != 0)) * SECTOR_LEN
 print(f'disk_read_block_size: {disk_read_block_size}')
 
+nsectors_per_node = int(disk_read_block_size // SECTOR_LEN)
+print(f'nsectors_per_node: {nsectors_per_node}')
 
 # Write aisaq index
 
@@ -109,8 +111,23 @@ with open(f'{prefix}_disk.index', 'rb') as f:
                 fp[cur_target_sector, int((cur_node % nnodes_per_sector_aisaq[0]) * max_node_len_aisaq[0]):int((cur_node % nnodes_per_sector_aisaq[0] + 1) * max_node_len_aisaq[0])] = numpy.frombuffer(block_data, dtype=numpy.uint8)
                 if i * nnodes_per_sector[0] + j == npts[0] - 1:
                     break
+    elif nnodes_per_sector_aisaq[0] == 0 and nnodes_per_sector[0] == 0:
+        for i in range(npts[0]):
+            f.seek(SECTOR_LEN + i * disk_read_block_size)
+            block_data = numpy.frombuffer(f.read(max_node_len[0]), dtype=numpy.uint8)
+            nnbrs = numpy.frombuffer(block_data[int(4*ndims[0]):int(4*ndims[0]+4)], dtype=numpy.uint32)
+            # print(i, nnbrs)
+            for k in range(nnbrs[0]):
+                nbr = numpy.frombuffer(block_data[int(4*ndims[0]+4+4*k):int(4*ndims[0]+4+4*k+4)], dtype=numpy.uint32)
+                block_data = numpy.concatenate([block_data, pq_comp_data[nbr[0]]])
+            for j in range(nsectors_per_node_aisaq):
+                if j == nsectors_per_node_aisaq - 1:
+                    fp[int(1 + i * nsectors_per_node_aisaq + j), 0:int(max_node_len_aisaq[0] % SECTOR_LEN)] = numpy.frombuffer(block_data[j*SECTOR_LEN:], dtype=numpy.uint8)
+                else:
+                    fp[int(1 + i * nsectors_per_node_aisaq + j)] = numpy.frombuffer(block_data[j*SECTOR_LEN:(j+1)*SECTOR_LEN], dtype=numpy.uint8)
     else:
-        # nnodes_per_sector[0] == 0 のケースには未対応
+        # nnodes_per_sector_aisaq[0] != 0 and nnodes_per_sector[0] == 0
+        # impossible because nnodes_per_sector[0] >= nnodes_per_sector_aisaq[0]
         raise NotImplementedError
     del fp
 
