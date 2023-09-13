@@ -16,18 +16,27 @@ cp -a /vol1/user/daisuke/data/ann/sift1m/sift .
 ./build/apps/utils/compute_groundtruth  --data_type float --dist_fn l2 --base_file data/sift/sift_learn.fbin --query_file data/sift/sift_query.fbin --gt_file data/sift/sift_query_learn_gt100 --K 100
 
 # テスト1 node size > sector size
-## インデックス作成
+## インデックス作成（スクラッチから作成）
 rm -rf index/*
 ./build/apps/build_disk_index --data_type float --dist_fn l2 --data_path data/sift/sift_learn.fbin --index_path_prefix index/sift_learn -R 32 -L50 -B 0.012 -M 1 -T 16 --use_aisaq
-## チェック
-python python/scripts/check_aisaq_layout.py index/sift_learn
+### チェック
+python python/scripts/check_aisaq_layout.py index/sift_learn 0
+## インデックス作成（disk.indexから作成）
+python python/apps/create_aisaq_index_from_disk_index.py index/sift_learn
+### チェック
+python python/scripts/check_aisaq_layout.py index/sift_learn 1
+
 
 # テスト2 node size < sector size
-## インデックス作成
+## インデックス作成（スクラッチから作成）
 rm -rf index/*
 ./build/apps/build_disk_index --data_type float --dist_fn l2 --data_path data/sift/sift_learn.fbin --index_path_prefix index/sift_learn -R 32 -L50 -B 0.003 -M 1 -T 16 --use_aisaq
-## チェック
-python python/scripts/check_aisaq_layout.py index/sift_learn
+### チェック
+python python/scripts/check_aisaq_layout.py index/sift_learn 0
+## インデックス作成（disk.indexから作成）
+python python/apps/create_aisaq_index_from_disk_index.py index/sift_learn
+### チェック
+python python/scripts/check_aisaq_layout.py index/sift_learn 1
 '''
 
 prefix = sys.argv[1]
