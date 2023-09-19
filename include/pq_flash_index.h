@@ -29,19 +29,19 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT ~PQFlashIndex();
 
 #ifdef EXEC_ENV_OLS
-    DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix);
+    DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix, const bool use_aisaq = false);
 #else
     // load compressed data, and obtains the handle to the disk-resident index
-    DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix);
+    DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix, const bool use_aisaq = false);
 #endif
 
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT int load_from_separate_paths(diskann::MemoryMappedFiles &files, uint32_t num_threads,
                                                    const char *index_filepath, const char *pivots_filepath,
-                                                   const char *compressed_filepath);
+                                                   const char *compressed_filepath, const char *aisaq_index_filepath);
 #else
     DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                                   const char *pivots_filepath, const char *compressed_filepath);
+                                                   const char *pivots_filepath, const char *compressed_filepath, const char *aisaq_index_filepath);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
@@ -106,6 +106,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
                                                    std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers);
 
     DISKANN_DLLEXPORT std::vector<std::uint8_t> get_pq_vector(std::uint64_t vid);
+    DISKANN_DLLEXPORT void load_pq_vectors_of_medoids();
     DISKANN_DLLEXPORT uint64_t get_num_points();
 
   protected:
@@ -182,6 +183,11 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     uint8_t *data = nullptr;
     uint64_t _n_chunks;
     FixedChunkPQTable _pq_table;
+
+    // PQ data with AiSAQ
+    bool use_aisaq = false;
+    std::unordered_map<uint64_t, uint8_t *> data_variable_len;
+    std::string _aisaq_index_file;
 
     // distance comparator
     std::shared_ptr<Distance<T>> _dist_cmp;

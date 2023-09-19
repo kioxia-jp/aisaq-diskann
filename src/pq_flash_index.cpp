@@ -740,21 +740,25 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::set_univers
 
 #ifdef EXEC_ENV_OLS
 template <typename T, typename LabelT>
-int PQFlashIndex<T, LabelT>::load(MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix)
+int PQFlashIndex<T, LabelT>::load(MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix, const bool use_aisaq = false)
 {
 #else
-template <typename T, typename LabelT> int PQFlashIndex<T, LabelT>::load(uint32_t num_threads, const char *index_prefix)
+template <typename T, typename LabelT> int PQFlashIndex<T, LabelT>::load(uint32_t num_threads, const char *index_prefix, const bool use_aisaq)
 {
 #endif
     std::string pq_table_bin = std::string(index_prefix) + "_pq_pivots.bin";
     std::string pq_compressed_vectors = std::string(index_prefix) + "_pq_compressed.bin";
     std::string _disk_index_file = std::string(index_prefix) + "_disk.index";
+
+    this->use_aisaq = use_aisaq;
+    std::string aisaq_index_file = std::string(index_prefix) + "_aisaq.index";
+
 #ifdef EXEC_ENV_OLS
     return load_from_separate_paths(files, num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
-                                    pq_compressed_vectors.c_str());
+                                    pq_compressed_vectors.c_str(), aisaq_index_file.c_str());
 #else
     return load_from_separate_paths(num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
-                                    pq_compressed_vectors.c_str());
+                                    pq_compressed_vectors.c_str(), aisaq_index_file.c_str());
 #endif
 }
 
@@ -767,7 +771,7 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(diskann::MemoryMappedFiles
 #else
 template <typename T, typename LabelT>
 int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                                      const char *pivots_filepath, const char *compressed_filepath)
+                                                      const char *pivots_filepath, const char *compressed_filepath, const char *aisaq_index_filepath)
 {
 #endif
     std::string pq_table_bin = pivots_filepath;
@@ -804,11 +808,19 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     this->_aligned_dim = ROUND_UP(pq_file_dim, 8);
 
     size_t npts_u64, nchunks_u64;
+
+    // if (this->use_aisaq) {
+    //     diskann::cout << "Error. AiSAQ index search is not yet implemented. Exiting." << std::endl;
+    //     return -1;
+    // }
+    
+    if (!this->use_aisaq) {
 #ifdef EXEC_ENV_OLS
-    diskann::load_bin<uint8_t>(files, pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
+        diskann::load_bin<uint8_t>(files, pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #else
-    diskann::load_bin<uint8_t>(pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
+        diskann::load_bin<uint8_t>(pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #endif
+    }
 
     this->_num_points = npts_u64;
     this->_n_chunks = nchunks_u64;
@@ -1102,6 +1114,11 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
         diskann::cout << "Setting re-scaling factor of base vectors to " << this->_max_base_norm << std::endl;
         delete[] norm_val;
     }
+
+    if (this->use_aisaq) {
+        this->load_pq_vectors_of_medoids();
+    }
+
     diskann::cout << "done.." << std::endl;
     return 0;
 }
@@ -1693,6 +1710,24 @@ std::vector<std::uint8_t> PQFlashIndex<T, LabelT>::get_pq_vector(std::uint64_t v
 {
     std::uint8_t *pqVec = &this->data[vid * this->_n_chunks];
     return std::vector<std::uint8_t>(pqVec, pqVec + this->_n_chunks);
+}
+
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::load_pq_vectors_of_medoids()
+{
+    std::ifstream reader;
+    reader.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    
+
+    for (unsigned i = 0; i < this->_num_medoids; i++) {
+        uint64_t medoid_id = this->_medoids[i];
+        uint8_t *pq_vec_data = new uint8_t[this->_n_chunks];
+
+        reader.seekg(2 * sizeof(int) + medoid_id * this->_n_chunks, reader.beg);
+        reader.read((char *)pq_vec_data, this->_n_chunks);
+
+        this->data_variable_len[medoid_id] = pq_vec_data;
+    }
 }
 
 template <typename T, typename LabelT> std::uint64_t PQFlashIndex<T, LabelT>::get_num_points()

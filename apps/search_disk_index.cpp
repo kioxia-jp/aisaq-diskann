@@ -53,7 +53,7 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
                       const uint32_t num_threads, const uint32_t recall_at, const uint32_t beamwidth,
                       const uint32_t num_nodes_to_cache, const uint32_t search_io_limit,
                       const std::vector<uint32_t> &Lvec, const float fail_if_recall_below,
-                      const std::vector<std::string> &query_filters, const bool use_reorder_data = false)
+                      const std::vector<std::string> &query_filters, const bool use_reorder_data = false, const bool use_aisaq = false)
 {
     diskann::cout << "Search parameters: #threads: " << num_threads << ", ";
     if (beamwidth <= 0)
@@ -112,7 +112,7 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     std::unique_ptr<diskann::PQFlashIndex<T, LabelT>> _pFlashIndex(
         new diskann::PQFlashIndex<T, LabelT>(reader, metric));
 
-    int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str());
+    int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str(), use_aisaq);
 
     if (res != 0)
     {
@@ -318,6 +318,7 @@ int main(int argc, char **argv)
     std::vector<uint32_t> Lvec;
     bool use_reorder_data = false;
     float fail_if_recall_below = 0.0f;
+    bool use_aisaq = false;
 
     po::options_description desc{
         program_options_utils::make_program_description("search_disk_index", "Searches on-disk DiskANN indexes")};
@@ -389,6 +390,9 @@ int main(int argc, char **argv)
         po::notify(vm);
         if (vm["use_reorder_data"].as<bool>())
             use_reorder_data = true;
+
+        if (vm["use_aisaq"].as<bool>())
+            use_aisaq = true;
     }
     catch (const std::exception &ex)
     {
