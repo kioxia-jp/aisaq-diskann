@@ -104,6 +104,12 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT std::vector<bool> read_nodes(const std::vector<uint32_t> &node_ids,
                                                    std::vector<T *> &coord_buffers,
                                                    std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers);
+    
+    DISKANN_DLLEXPORT std::vector<bool> read_nodes_aisaq(const std::vector<uint32_t> &node_ids,
+                                                         std::vector<T *> &coord_buffers,
+                                                         std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers,
+                                                         std::vector<uint8_t *> &pq_vec_buffers
+                                                        );
 
     DISKANN_DLLEXPORT std::vector<std::uint8_t> get_pq_vector(std::uint64_t vid);
     DISKANN_DLLEXPORT void load_pq_vectors_of_medoids();
@@ -136,6 +142,9 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // returns region of `node_buf` containing [COORD(T)]
     DISKANN_DLLEXPORT T *offset_to_node_coords(char *node_buf);
 
+    // returns region of `node_buf` containing [PQ_VECTORS_OF_NBRS]
+    DISKANN_DLLEXPORT uint8_t* offset_to_node_pq_nbrs(char *node_buf);
+
     // index info for multi-node sectors
     // nhood of node `i` is in sector: [i / nnodes_per_sector]
     // offset in sector: [(i % nnodes_per_sector) * max_node_len]
@@ -150,7 +159,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // nbrs of node `i` : (unsigned*) (offset + disk_bytes_per_point + 1)
 
     uint64_t _max_node_len = 0;
-    uint64_t _nnodes_per_sector = 0; // 0 for multi-sector nodes, >0 for multi-node sectors
+    uint64_t _nnodes_per_sector = 0;       // 0 for multi-sector nodes, >0 for multi-node sectors
+    uint64_t _nnodes_aisaq_per_sector = 0; // 0 for multi-sector nodes, >0 for multi-node sectors
     uint64_t _max_degree = 0;
 
     // Data used for searching with re-order vectors
