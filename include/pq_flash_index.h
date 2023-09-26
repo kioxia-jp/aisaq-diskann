@@ -186,8 +186,9 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 
     // PQ data with AiSAQ
     bool use_aisaq = false;
-    std::unordered_map<uint64_t, uint8_t *> data_variable_len;
+    std::unordered_map<uint32_t, uint8_t *> data_variable_len;
     std::string _aisaq_index_file;
+    std::string _pq_vector_file;
 
     // distance comparator
     std::shared_ptr<Distance<T>> _dist_cmp;

@@ -787,6 +787,9 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     size_t num_pts_in_label_file = 0;
 
     size_t pq_file_dim, pq_file_num_centroids;
+
+    this->_pq_vector_file = compressed_filepath;
+
 #ifdef EXEC_ENV_OLS
     get_bin_metadata(files, pq_table_bin, pq_file_num_centroids, pq_file_dim, METADATA_SIZE);
 #else
@@ -814,7 +817,14 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     //     return -1;
     // }
     
-    if (!this->use_aisaq) {
+    if (this->use_aisaq) {
+#ifdef EXEC_ENV_OLS
+        diskann::get_bin_metadata(files, pq_compressed_vectors, npts_u64, nchunks_u64);
+#else
+        diskann::get_bin_metadata(pq_compressed_vectors, npts_u64, nchunks_u64);
+#endif
+
+    } else {
 #ifdef EXEC_ENV_OLS
         diskann::load_bin<uint8_t>(files, pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #else
@@ -1119,6 +1129,10 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
         this->load_pq_vectors_of_medoids();
     }
 
+    // if (this->use_aisaq) {
+    //     throw ANNException("AiSAQ search is not yet implemented.", 1);
+    // }
+
     diskann::cout << "done.." << std::endl;
     return 0;
 }
@@ -1284,7 +1298,13 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     // lambda to batch compute query<-> node distances in PQ space
     auto compute_dists = [this, pq_coord_scratch, pq_dists](const uint32_t *ids, const uint64_t n_ids,
                                                             float *dists_out) {
-        diskann::aggregate_coords(ids, n_ids, this->data, this->_n_chunks, pq_coord_scratch);
+        if (this->use_aisaq) {
+            // diskann::aggregate_coords_aisaq(ids, n_ids, this->data_variable_len, this->_n_chunks, pq_coord_scratch);
+            diskann::aggregate_coords_aisaq(ids, n_ids, this->data_variable_len, this->_n_chunks, pq_coord_scratch);
+        } else {
+            diskann::aggregate_coords(ids, n_ids, this->data, this->_n_chunks, pq_coord_scratch);
+        }
+
         diskann::pq_dist_lookup(pq_coord_scratch, n_ids, this->_n_chunks, pq_dists, dists_out);
     };
     Timer query_timer, io_timer, cpu_timer;
@@ -1331,6 +1351,10 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         {
             throw ANNException("Cannot find medoid for specified filter.", -1, __FUNCSIG__, __FILE__, __LINE__);
         }
+    }
+    
+    if (this->use_aisaq) {
+        this->load_pq_vectors_of_medoids();
     }
 
     compute_dists(&best_medoid, 1, dist_scratch);
@@ -1717,7 +1741,9 @@ void PQFlashIndex<T, LabelT>::load_pq_vectors_of_medoids()
 {
     std::ifstream reader;
     reader.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-    
+
+    reader.open(this->_pq_vector_file);
+    reader.seekg(0);
 
     for (unsigned i = 0; i < this->_num_medoids; i++) {
         uint64_t medoid_id = this->_medoids[i];
