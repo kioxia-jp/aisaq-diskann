@@ -99,7 +99,7 @@ DISKANN_DLLEXPORT int build_disk_index(
     const std::string &label_file = std::string(""), // default is empty string for no label_file
     const std::string &universal_label = "", const uint32_t filter_threshold = 0,
     const uint32_t Lf = 0, // default is empty string for no universal label
-    bool use_aisaq = false); 
+    bool use_aisaq = false, uint32_t aisaq_pq_bytes = 0); 
     
 template <typename T>
 DISKANN_DLLEXPORT void create_disk_layout(const std::string base_file, const std::string mem_index_file,

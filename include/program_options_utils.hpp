@@ -78,5 +78,6 @@ const char *UNIVERSAL_LABEL =
     "universal label to a node.";
 const char *FILTERED_LBUILD = "Build complexity for filtered points, higher value results in better graphs";
 const char *USE_AISAQ = "Use all in storage ... product quantization (AiSAQ).";
+const char *AISAQ_PQ_BYTES = "Number of PQ bytes of a neighbor vector stored in the index. Only efftctive when --use_aisaq";
 
 } // namespace program_options_utils
