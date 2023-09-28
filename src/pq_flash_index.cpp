@@ -1400,7 +1400,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                                                             float *dists_out) {
         if (this->use_aisaq) {
             // diskann::aggregate_coords_aisaq(ids, n_ids, this->data_variable_len, this->_n_chunks, pq_coord_scratch);
-            diskann::aggregate_coords_aisaq(ids, n_ids, this->data_variable_len, this->_n_chunks, pq_coord_scratch);
+            diskann::aggregate_coords_aisaq(ids, n_ids, this->pq_medoid_vecs, this->_n_chunks, pq_coord_scratch);
         } else {
             diskann::aggregate_coords(ids, n_ids, this->data, this->_n_chunks, pq_coord_scratch);
         }
@@ -1451,10 +1451,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         {
             throw ANNException("Cannot find medoid for specified filter.", -1, __FUNCSIG__, __FILE__, __LINE__);
         }
-    }
-    
-    if (this->use_aisaq) {
-        this->load_pq_vectors_of_medoids();
     }
 
     compute_dists(&best_medoid, 1, dist_scratch);
@@ -1860,7 +1856,7 @@ void PQFlashIndex<T, LabelT>::load_pq_vectors_of_medoids()
         reader.seekg(2 * sizeof(int) + medoid_id * this->_n_chunks, reader.beg);
         reader.read((char *)pq_vec_data, this->_n_chunks);
 
-        this->data_variable_len[medoid_id] = pq_vec_data;
+        this->pq_medoid_vecs[medoid_id] = pq_vec_data;
     }
 }
 
