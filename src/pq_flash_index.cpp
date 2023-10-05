@@ -1849,8 +1849,16 @@ void PQFlashIndex<T, LabelT>::load_pq_vectors_of_medoids()
     reader.open(this->_pq_vector_file);
     reader.seekg(0);
 
-    for (unsigned i = 0; i < this->_num_medoids; i++) {
-        uint64_t medoid_id = this->_medoids[i];
+    // Load PQ vector of ID 0 in case of distance calculation failure
+    for (unsigned i = 0; i <= this->_num_medoids; i++) {
+        uint64_t medoid_id;
+        
+        if (i == this->_num_medoids) {
+            medoid_id = 0;
+        } else {
+            medoid_id = this->_medoids[i];
+        }
+
         uint8_t *pq_vec_data = new uint8_t[this->_n_chunks];
 
         reader.seekg(2 * sizeof(int) + medoid_id * this->_n_chunks, reader.beg);

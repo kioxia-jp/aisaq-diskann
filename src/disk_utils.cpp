@@ -1408,11 +1408,37 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
                      "apart from the intermin indices and final index."
                   << std::endl;
         std::string prepped_base = index_prefix_path + "_prepped_base.bin";
-        data_file_to_use = prepped_base;
-        float max_norm_of_base = diskann::prepare_base_for_inner_products<T>(base_file, prepped_base);
         std::string norm_file = disk_index_path + "_max_base_norm.bin";
-        diskann::save_bin<float>(norm_file, &max_norm_of_base, 1, 1);
-        diskann::cout << timer.elapsed_seconds_for_step("preprocessing data for inner product") << std::endl;
+        data_file_to_use = prepped_base;
+
+        bool skip_base_preparation = false;
+
+        if (file_exists(prepped_base) && file_exists(norm_file)) {
+            size_t base_npts, base_ndim;
+            size_t prepped_npts, prepped_ndim;
+            size_t norm_npts, norm_ndim;
+
+            diskann::get_bin_metadata(base_file, base_npts, base_ndim);
+            diskann::get_bin_metadata(prepped_base, prepped_npts, prepped_ndim);
+            diskann::get_bin_metadata(norm_file, norm_npts, norm_ndim);
+
+            // Check if preprocessed vector file is not broken
+            if (prepped_npts == base_npts &&
+                prepped_ndim == base_ndim + 1 &&
+                norm_npts == 1 && norm_ndim == 1 ) 
+            {
+                skip_base_preparation = true;
+            }
+
+        }
+
+        if (skip_base_preparation) {
+            diskann::cout << "Preprocessed data file exists. Not generating again." << std::endl;
+        } else {
+            float max_norm_of_base = diskann::prepare_base_for_inner_products<T>(base_file, prepped_base);
+            diskann::save_bin<float>(norm_file, &max_norm_of_base, 1, 1);
+            diskann::cout << timer.elapsed_seconds_for_step("preprocessing data for inner product") << std::endl;
+        }
     }
 
     uint32_t R = (uint32_t)atoi(param_list[0].c_str());

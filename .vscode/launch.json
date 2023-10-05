@@ -31,6 +31,35 @@
                     "ignoreFailures": true
                 }
             ]
+        },
+        {
+            "type": "cppdbg",
+            "name": "Search AiSAQ Index (KILT E5)",
+            "request": "launch",
+            "program": "${workspaceRoot}/build/apps/search_disk_index",
+            "cwd": "/mnt/index_store/tatsuno/",
+            "args": [
+                "--data_type", "float",
+                "--dist_fn", "l2", 
+                "--index_path_prefix", "ann_indices/kilt_e5/aisaq/index",
+                // "--index_path_prefix", "/home/sift1m_diskann/index_recreated/index_original/index",
+                "--num_nodes_to_cache", "0",
+                "-T", "2", "-W", "4",
+                "--query_file", "ann_datasets/kilt_e5/query_train.bin", 
+                "--gt_file","null",
+                "-K", "1", 
+                "--result_path", "ann_results/vscode",
+                "-L", "16",
+                // "--use_aisaq"
+            ],
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
+
     ]
 }
