@@ -421,6 +421,11 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    if ((num_nodes_to_cache > 0 || filter_label != "" || use_reorder_data) && use_aisaq) {
+        std::cout << "AiSAQ currently does not support node caching, filtering or reordering." << std::endl;
+        return -1;
+    }
+
     if ((data_type != std::string("float")) && (metric == diskann::Metric::INNER_PRODUCT))
     {
         std::cout << "Currently support only floating point data for Inner Product." << std::endl;
