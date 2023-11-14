@@ -837,13 +837,21 @@ template <typename T, typename LabelT> int PQFlashIndex<T, LabelT>::load(uint32_
     this->use_aisaq = use_aisaq;
     std::string aisaq_index_file = std::string(index_prefix) + "_aisaq.index";
 
+    Timer load_timer;
+    load_timer.reset();
+    int load_ret;
+
 #ifdef EXEC_ENV_OLS
-    return load_from_separate_paths(files, num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
+    load_ret = load_from_separate_paths(files, num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
                                     pq_compressed_vectors.c_str(), aisaq_index_file.c_str());
 #else
-    return load_from_separate_paths(num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
+    load_ret = load_from_separate_paths(num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
                                     pq_compressed_vectors.c_str(), aisaq_index_file.c_str());
 #endif
+    float load_time = (float) load_timer.elapsed();
+
+    diskann::cout << "Index load time (us): " << load_time << std::endl;
+    return load_ret;
 }
 
 #ifdef EXEC_ENV_OLS
