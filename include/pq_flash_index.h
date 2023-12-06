@@ -25,14 +25,14 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 {
   public:
     DISKANN_DLLEXPORT PQFlashIndex(std::shared_ptr<AlignedFileReader> &fileReader,
-                                   diskann::Metric metric = diskann::Metric::L2);
+                                   diskann::Metric metric = diskann::Metric::L2, const bool use_aisaq = false);
     DISKANN_DLLEXPORT ~PQFlashIndex();
 
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix, const bool use_aisaq = false);
 #else
     // load compressed data, and obtains the handle to the disk-resident index
-    DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix, const bool use_aisaq = false);
+    DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix);
 #endif
 
 #ifdef EXEC_ENV_OLS
@@ -115,6 +115,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT void load_pq_vectors_of_medoids();
     DISKANN_DLLEXPORT uint64_t get_num_points();
 
+    DISKANN_DLLEXPORT void generate_aisaq_index(const std::string aisaq_index_file);
+
   protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
     DISKANN_DLLEXPORT void setup_thread_data(uint64_t nthreads, uint64_t visited_reserve = 4096);
@@ -195,7 +197,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     FixedChunkPQTable _pq_table;
 
     // PQ data with AiSAQ
-    bool use_aisaq = false;
+    const bool use_aisaq;
     std::unordered_map<uint32_t, uint8_t *> pq_medoid_vecs;
     std::string _aisaq_index_file;
     std::string _pq_vector_file;
