@@ -1,3 +1,4 @@
+// This file is OBSOLETE. Written before the author noticed create_aisaq_layout() is already implemented.
 // Something about copyright
 
 #include <iostream>
@@ -12,13 +13,124 @@ namespace po = boost::program_options;
 namespace diskann {
     template <typename T, typename LabelT>
     void PQFlashIndex<T, LabelT>::generate_aisaq_index(const std::string aisaq_index_file) {
-        uint32_t nsectors_to_read_diskann = _nnodes_per_sector > 0 ? 1 : ROUND_UP(_max_node_len / defaults::SECTOR_LEN);
         uint64_t max_node_len_aisaq = this->_max_node_len + this->_max_degree * sizeof(uint8_t) * this->_n_chunks;
+        uint32_t nsectors_to_read_diskann = DIV_ROUND_UP(this->_max_node_len, defaults::SECTOR_LEN);
+        uint32_t nsectors_to_write_aisaq = DIV_ROUND_UP(max_node_len_aisaq, defaults::SECTOR_LEN);
+
+        uint32_t nnodes_in_single_diskann_read = this->_nnodes_per_sector > 0 ? this->_nnodes_per_sector : 1;
+
+        this->_nnodes_aisaq_per_sector = ROUND_DOWN(defaults::SECTOR_LEN / max_node_len_aisaq, 1);
+
+        char *diskann_read_buf = new char[nsectors_to_read_diskann * defaults::SECTOR_LEN];
+        char *aisaq_write_buf = new char[nsectors_to_write_aisaq * defaults::SECTOR_LEN];
+        // char *diskann_node_chunk_buf = new char[this->_max_node_len];
+        char *aisaq_node_chunk_buf = new char[max_node_len_aisaq];
+        char *aisaq_pq_vecs_buf = new char[this->_max_degree * sizeof(uint8_t) * this->_n_chunks];
+
+        diskann::cout << "bar" << std::endl;
+
+        std::ofstream aisaq_index_writer(aisaq_index_file, std::ios::binary);
+        
+        // Includes metadata
+        auto node_offset_in_aisaq_file = [this, max_node_len_aisaq, nsectors_to_write_aisaq](uint32_t node_id) {
+            if (this->_nnodes_aisaq_per_sector == 0) {
+                return defaults::SECTOR_LEN + node_id * nsectors_to_write_aisaq * defaults::SECTOR_LEN;
+            } else {
+                return defaults::SECTOR_LEN + (node_id / this->_nnodes_aisaq_per_sector) * defaults::SECTOR_LEN + (node_id % this->_nnodes_aisaq_per_sector) * max_node_len_aisaq;
+            }
+        };
+
+        if (this->_nnodes_per_sector > 0 && this->_nnodes_aisaq_per_sector > 0) {
+            // Since DiskANN has more nodes in a sector than AiSAQ, aligning the I/O loop to DiskANN is more efficient.
+            
+
+            for (uint32_t i_sector = 0; i_sector < DIV_ROUND_UP(this->_num_points, this->_nnodes_per_sector); i_sector++) {
+                ScratchStoreManager<SSDThreadData<T>> manager(this->_thread_data);
+                auto data = manager.scratch_space();
+                IOContext &ctx = data->ctx;
+                
+                uint64_t top_node_id = i_sector * this->_nnodes_per_sector;
+
+                std::vector<AlignedRead> read_reqs;
+                AlignedRead read;
+                read.len = nsectors_to_read_diskann * defaults::SECTOR_LEN;
+                read.buf = diskann_read_buf;
+                read.offset = get_node_sector(top_node_id) * defaults::SECTOR_LEN;
+                read_reqs[0] = read;
+
+                this->reader->read(read_reqs, ctx);
+
+                for (uint32_t offset_in_sectors = 0; offset_in_sectors < nnodes_in_single_diskann_read; offset_in_sectors++) {
+                    // memcpy(diskann_node_chunk_buf, diskann_read_buf + offset_in_sectors * this->_max_node_len, this->_max_node_len);
+
+                    char *diskann_node_chunk = this->offset_to_node(diskann_read_buf, top_node_id + offset_in_sectors);
+                    uint32_t* node_nhood = this->offset_to_node_nhood(diskann_node_chunk);
+                    auto nnbrs = *node_nhood;
+                    uint32_t* nbr_ids = node_nhood + 1;
+                    // memset(aisaq_node_chunk_buf, 0, max_node_len_aisaq);
+                    memset(aisaq_pq_vecs_buf, 0, this->_max_degree * sizeof(uint8_t) * this->_n_chunks);
+
+                    memcpy(aisaq_node_chunk_buf, diskann_node_chunk, this->_max_node_len);
+
+                    for (uint32_t m = 0; m < nnbrs; m++) {
+                        uint32_t nbr_id = nbr_ids[m];
+                        uint8_t *pq_vec = this->data + nbr_id * this->_n_chunks;
+                        memcpy(aisaq_node_chunk_buf + this->_max_node_len + m * sizeof(uint8_t) * this->_n_chunks, pq_vec, sizeof(uint8_t) * this->_n_chunks);
+                    }
+                    
+                    
+                }
+
+                if (i_sector % 10000 == 0) {
+                    diskann::cout << i_sector << " sectors read." << std::endl;
+                }
+            }
+        } else if (this->_nnodes_per_sector > 0 && this->_nnodes_aisaq_per_sector == 0) {
+
+        } else if (this->_nnodes_per_sector == 0 && this->_nnodes_aisaq_per_sector == 0) {
+            std::vector<AlignedRead> read_reqs;
+            for (uint64_t node_id = 0; node_id < this->_num_points; node_id++) {
+                AlignedRead read;
+                read.len = nsectors_to_read_diskann * defaults::SECTOR_LEN;
+                read.buf = diskann_read_buf;
+                read.offset = get_node_sector(node_id) * defaults::SECTOR_LEN;
+                read_reqs[0] = read;
+
+
+
+            }
+        } else {
+
+        }
+
+        
+
+        for (uint64_t node_ctr = 0; node_ctr < this->_num_points; node_ctr++) {
+
+        }
+
+
+
+    }
+
+    
+
+    uint32_t gcd(const uint32_t a, const uint32_t b) {
+        if (a % b == 0) {
+            return b;
+        }
+
+        return gcd(b, a % b);
+    }
+
+    uint32_t lcm(const uint32_t a, const uint32_t b) {
+        return a * b / gcd(a, b);
     }
 } // end of diskann
 
+
 template <typename T, typename LabelT = uint32_t>
-void create_aisaq_index_from_diskann(const diskann::Metric metric, const std::string index_path_prefix, const std::string pq_file_prefix, const std::string disk_index_path, const std::string aisaq_index_path) {
+void create_aisaq_index_from_diskann(const diskann::Metric metric, const std::string index_path_prefix, const std::string pq_file_prefix, const std::string disk_index_path, std::string aisaq_index_path) {
     // Avoid the threads=1 bug.
     int num_threads = 2;
     std::shared_ptr<AlignedFileReader> reader = nullptr;
@@ -38,6 +150,7 @@ void create_aisaq_index_from_diskann(const diskann::Metric metric, const std::st
 
     if (index_path_prefix != std::string("")) {
         _pFlashIndex->load(num_threads, index_path_prefix.c_str());
+        aisaq_index_path = index_path_prefix + "_aisaq2.index";
     } else {
         std::string pq_compressed_path = pq_file_prefix + "_pq_compressed.bin";
         std::string pq_table_path = pq_file_prefix + "_pq_pivots.bin";

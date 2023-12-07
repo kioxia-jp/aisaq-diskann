@@ -59,6 +59,68 @@
                     "ignoreFailures": true
                 }
             ]
+        },
+        // {
+        //     "type": "cppdbg",
+        //     "name": "AiSAQ index from DiskANN",
+        //     "request": "launch",
+        //     "program": "${workspaceRoot}/build/apps/utils/disk_index_to_aisaq",
+        //     "cwd": "/mnt/index_store/tatsuno/",
+        //     "args": [
+        //         "--data_type", "float",
+        //         "--dist_fn", "l2", 
+        //         "--index_path_prefix", "/mnt/index_store/tatsuno/ann_indices/sift1m_aisaq/index",
+        //     ],
+        //     "setupCommands": [
+        //         {
+        //             "description": "Enable pretty-printing for gdb",
+        //             "text": "-enable-pretty-printing",
+        //             "ignoreFailures": true
+        //         }
+        //     ]
+        // }
+        {
+            "type": "cppdbg",
+            "name": "AiSAQ index from DiskANN",
+            "request": "launch",
+            "program": "${workspaceRoot}/build/apps/utils/create_aisaq_layout",
+            "cwd": "/mnt/index_store/tatsuno/ann_indices/sift1m_aisaq",
+            "args": [
+                "float",
+                "/mnt/index_store/tatsuno/ann_datasets/sift1m/sift_base.bin",
+                "index_mem.index",
+                "index_pq_compressed.bin",
+                "index_aisaq2.index"
+            ],
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "type": "cppdbg",
+            "name": "Generate PQ",
+            "request": "launch",
+            "program": "${workspaceRoot}/build/apps/utils/generate_pq",
+            "cwd": "/mnt/index_store/tatsuno/ann_indices/kilt_e5/aisaq/",
+            "args": [
+                "float",
+                "/mnt/index_store/tatsuno/ann_indices/kilt_e5/aisaq/index_prepped_base.bin",
+                "/mnt/index_store/tatsuno/ann_indices/kilt_e5/aisaq_pq/index_pq8",
+                "8",
+                "0.0045002896",
+                "0"
+            ],
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
 
     ]

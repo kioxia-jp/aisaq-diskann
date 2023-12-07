@@ -147,6 +147,9 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // returns region of `node_buf` containing [PQ_VECTORS_OF_NBRS]
     DISKANN_DLLEXPORT uint8_t* offset_to_node_pq_nbrs(char *node_buf);
 
+    // return offset of the nodes in the ENTIRE AiSAQ index file
+    DISKANN_DLLEXPORT uint64_t node_offset_in_aisaq_index(uint64_t node_id);
+
     // index info for multi-node sectors
     // nhood of node `i` is in sector: [i / nnodes_per_sector]
     // offset in sector: [(i % nnodes_per_sector) * max_node_len]

@@ -72,14 +72,17 @@ target_link_libraries(merge_shards ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK
 add_executable(create_disk_layout create_disk_layout.cpp)
 target_link_libraries(create_disk_layout ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS})
 
+add_executable(create_aisaq_layout create_aisaq_layout.cpp)
+target_link_libraries(create_aisaq_layout ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS})
+
 add_executable(generate_synthetic_labels generate_synthetic_labels.cpp)
 target_link_libraries(generate_synthetic_labels ${PROJECT_NAME} Boost::program_options)
 
 add_executable(stats_label_data stats_label_data.cpp)
 target_link_libraries(stats_label_data ${PROJECT_NAME} Boost::program_options)
 
-add_executable(disk_index_to_aisaq disk_index_to_aisaq.cpp)
-target_link_libraries(disk_index_to_aisaq ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} Boost::program_options)
+# add_executable(disk_index_to_aisaq disk_index_to_aisaq.cpp)
+# target_link_libraries(disk_index_to_aisaq ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} Boost::program_options)
 
 if (NOT MSVC)
     include(GNUInstallDirs)
@@ -106,9 +109,10 @@ if (NOT MSVC)
             partition_with_ram_budget
             merge_shards
             create_disk_layout
+            create_aisaq_layout
             generate_synthetic_labels
             stats_label_data
-            disk_index_to_aisaq
+            # disk_index_to_aisaq
             RUNTIME
     )
 endif()
