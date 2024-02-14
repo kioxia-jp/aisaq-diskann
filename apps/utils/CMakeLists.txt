@@ -81,9 +81,6 @@ target_link_libraries(generate_synthetic_labels ${PROJECT_NAME} Boost::program_o
 add_executable(stats_label_data stats_label_data.cpp)
 target_link_libraries(stats_label_data ${PROJECT_NAME} Boost::program_options)
 
-# add_executable(disk_index_to_aisaq disk_index_to_aisaq.cpp)
-# target_link_libraries(disk_index_to_aisaq ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} Boost::program_options)
-
 if (NOT MSVC)
     include(GNUInstallDirs)
     install(TARGETS fvecs_to_bin
@@ -112,7 +109,6 @@ if (NOT MSVC)
             create_aisaq_layout
             generate_synthetic_labels
             stats_label_data
-            # disk_index_to_aisaq
             RUNTIME
     )
 endif()
