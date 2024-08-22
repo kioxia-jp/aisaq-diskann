@@ -1,3 +1,6 @@
+<!-- Copyright (c) Kioxia Corporation. All rights reserved.
+Licensed under the MIT license. -->
+
 **Usage for AiSAQ indices**
 ==============================
 
@@ -5,7 +8,7 @@ Creating an AiSAQ index from a dataset
 ---------------------------------------------
 
 To generate an AiSAQ index from a raw vector dataset, use the `apps/build_disk_index` program with the `--use_aisaq` option.
-If this option is enabled, the PQ vector size can be directly specified by the `--aisaq_PQ_bytes` option. The value of `-B` (`--search_DRAM_budget`) option is ignored if the `--aisaq_PQ_bytes` is specified.
+If this option is enabled, both of AiSAQ and DiskANN index files are generated and the PQ vector size can be directly specified by the `--aisaq_PQ_bytes` option. The value of `-B` (`--search_DRAM_budget`) option is ignored if the `--aisaq_PQ_bytes` is specified.
 
 The below example builds an AiSAQ index with 32 bytes PQ vectors. `-B 64` is not used to calculate the PQ vector size.
 
@@ -18,7 +21,7 @@ The below example builds an AiSAQ index with 32 bytes PQ vectors. `-B 64` is not
 Creating an AiSAQ index from an existing DiskANN index
 ------------------------------------------------------
 
-If you already have a DiskANN index, it can be converted into an AiSAQ index without rebuilding its graph by the `apps/utils/create_aisaq_layout` program. For illustrative purpose, the DiskANN index is assumed to be built with `--index_path_prefix /path/to/index`.
+If you already have a DiskANN index, it can be converted into an AiSAQ index by the `apps/utils/create_aisaq_layout` program, without rebuilding the graph. For illustrative purpose, the DiskANN index is assumed to be built with `--index_path_prefix /path/to/index`.
 
 The `apps/utils/create_aisaq_layout` program has 5 arguments shown in below.
 
