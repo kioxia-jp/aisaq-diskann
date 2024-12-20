@@ -8,6 +8,16 @@ The usage of our additional AiSAQ indices is described below:
 
 - [Commandline interface for building and search SSD-based AiSAQ indices](workflows/AiSAQ_index.md)
 
+To cite this project, please use the information below:
+
+```
+@misc{aisaq-diskann,
+    author = {Kento Tatsuno, Daisuke Miyashita},
+    title = {AiSAQ-DiskANN: DRAM-free implementation for ANNS based on DiskANN},
+    url = {http://github.com/xxx/AiSAQ-DiskANN},
+    year = {2024}
+} 
+```
 
 # DiskANN
 
