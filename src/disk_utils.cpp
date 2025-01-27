@@ -485,7 +485,7 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
 /* If the number of filters per point N exceeds the graph degree R,
   then it is difficult to have edges to all labels from this point.
   This function break up such dense points to have only a threshold of maximum
-  T labels per point  It divides one graph nodes to multiple nodes and append
+  T labels per point It divides one graph nodes to multiple nodes and append
   the new nodes at the end. The dummy map contains the real graph id of the
   new nodes added to the graph */
 template <typename T>
@@ -1170,8 +1170,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     output_file_meta.push_back(disk_index_file_size);
     output_file_meta.push_back(num_pq_chunks);
 
-    // output_file_metaを書き込むためのスペースに適当な値を書き込み。実際の書き込みは最後にdiskann::save_binで実施。
-    // ここで実際の値を書き込まないのは、途中でエラーが発生したときにヘッダは正しいが中身が壊れたファイルを生成しないようにするため？
+    // Writes dummy data to the header to avoid corrupted data with a correct header
     diskann_writer.write(sector_buf.get(), defaults::SECTOR_LEN);
 
     std::unique_ptr<T[]> cur_node_coords = std::make_unique<T[]>(ndims_64);
@@ -1203,10 +1202,9 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
                 assert(nnbrs <= width_u32);
 
                 // read node's nhood
-                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t)); // nnbrsで良いのでは？
+                vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t)); // nnbrs?
                 if (nnbrs > width_u32)
                 {
-                    diskann::cout << "ここには来ないはず？" << std::endl;
                     vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
                 }
 
@@ -1252,7 +1250,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
             }
             memset(multisector_buf.get(), 0, nsectors_per_node * defaults::SECTOR_LEN);
 
-            memset(node_buf.get(), 0, max_node_len);    // 必要ない気がする
+            memset(node_buf.get(), 0, max_node_len);
             // read cur node's nnbrs
             vamana_reader.read((char *)&nnbrs, sizeof(uint32_t));
 
@@ -1261,10 +1259,9 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
             assert(nnbrs <= width_u32);
 
             // read node's nhood
-            vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t)); // nnbrsで良いのでは？
+            vamana_reader.read((char *)nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(uint32_t)); // nnbrs?
             if (nnbrs > width_u32)
             {
-                diskann::cout << "ここには来ないはず？" << std::endl;
                 vamana_reader.seekg((nnbrs - width_u32) * sizeof(uint32_t), vamana_reader.cur);
             }
 
