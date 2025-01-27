@@ -14,7 +14,7 @@ To cite this project, please use the information below:
 @misc{aisaq-diskann,
     author = {Kento Tatsuno, Daisuke Miyashita},
     title = {AiSAQ-DiskANN: DRAM-free implementation for ANNS based on DiskANN},
-    url = {http://github.com/xxx/AiSAQ-DiskANN},
+    url = {https://github.com/KioxiaAmerica/aisaq-diskann},
     year = {2024}
 } 
 ```
