@@ -40,3 +40,11 @@ if (NOT MSVC)
             RUNTIME
     )
 endif()
+
+#add BUILD_NUMBER variable from git
+execute_process(COMMAND bash "-c" "git rev-list --count HEAD 2>/dev/null || echo 0;" OUTPUT_VARIABLE __BUILD_NUMBER)
+execute_process(COMMAND bash "-c" "git rev-list -1 HEAD 2>/dev/null || echo 0000;" OUTPUT_VARIABLE __GIT_REV)
+string(STRIP ${__BUILD_NUMBER} __BUILD_NUMBER)
+string(STRIP ${__GIT_REV} __GIT_REV)
+add_definitions( -DBUILD_NUMBER="${__BUILD_NUMBER}" )
+add_definitions( -DGIT_REV="${__GIT_REV}" )

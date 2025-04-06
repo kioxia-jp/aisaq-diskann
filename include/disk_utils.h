@@ -103,6 +103,9 @@ DISKANN_DLLEXPORT int build_disk_index(
 template <typename T>
 DISKANN_DLLEXPORT void create_disk_layout(const std::string base_file, const std::string mem_index_file,
                                           const std::string output_file,
-                                          const std::string reorder_data_file = std::string(""));
+                                          const std::string reorder_data_file = std::string(""),
+                                          const std::string &index_prefix_path = std::string(""),
+                                          int inline_pq = -1,
+                                          bool rearrange = false);
 
 } // namespace diskann

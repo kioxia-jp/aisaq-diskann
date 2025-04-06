@@ -21,12 +21,16 @@ int main(int argc, char **argv)
     float B, M;
     bool append_reorder_data = false;
     bool use_opq = false;
+    bool rearrange = false;
+    int inline_pq = -1;
+    bool enable_inline_pq;
 
     po::options_description desc{
         program_options_utils::make_program_description("build_disk_index", "Build a disk-based index.")};
     try
     {
         desc.add_options()("help,h", "Print information on arguments");
+        desc.add_options()("version,v", "Show version information");
 
         // Required parameters
         po::options_description required_configs("Required");
@@ -78,6 +82,15 @@ int main(int argc, char **argv)
                                        "internally where each node has a maximum F labels.");
         optional_configs.add_options()("label_type", po::value<std::string>(&label_type)->default_value("uint"),
                                        program_options_utils::LABEL_TYPE_DESCRIPTION);
+        optional_configs.add_options()("inline_pq",
+                                       po::value<int32_t>(&inline_pq),
+                                       "set number of pq vectors to be stored inline within the node, "
+                                       "pass 0 for auto, pass R for all, value must be <= R.");
+        optional_configs.add_options()("rearrange",
+                                       po::bool_switch(&rearrange)->default_value(false),
+                                       "enable vectors rearanging, when enabled, each vector will be assigned "
+                                       "and stored with a new id, in a way that the number of IOs needed to read "
+                                       "the PQ vectors during search will be minimal");
 
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
@@ -89,6 +102,13 @@ int main(int argc, char **argv)
             std::cout << desc;
             return 0;
         }
+        if (vm.count("version")) {
+            std::cout << "version 2.5-" << BUILD_NUMBER << " (aisaq)" << std::endl
+                    << "compiled: " __DATE__ << " " << __TIME__ << std::endl
+                    << "git revision: " << GIT_REV << std::endl;
+            return 0;
+        }
+        enable_inline_pq = vm.count("inline_pq");
         po::notify(vm);
         if (vm["append_reorder_data"].as<bool>())
             append_reorder_data = true;
@@ -132,12 +152,19 @@ int main(int argc, char **argv)
             return -1;
         }
     }
+    /* validate inline_pq */
+    if (enable_inline_pq && (inline_pq < 0 || inline_pq > R)) {
+        diskann::cerr << "Error: inline_pq value must be between 0 and R" << std::endl;
+        return -1;
+    }
 
     std::string params = std::string(std::to_string(R)) + " " + std::string(std::to_string(L)) + " " +
                          std::string(std::to_string(B)) + " " + std::string(std::to_string(M)) + " " +
                          std::string(std::to_string(num_threads)) + " " + std::string(std::to_string(disk_PQ)) + " " +
                          std::string(std::to_string(append_reorder_data)) + " " +
                          std::string(std::to_string(build_PQ)) + " " + std::string(std::to_string(QD));
+                         params+= " " + std::string(std::to_string(inline_pq));
+                         params+= " " + std::string(std::to_string(rearrange));
 
     try
     {

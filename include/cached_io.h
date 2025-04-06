@@ -100,6 +100,27 @@ class cached_ifstream
         }
     }
 
+    void seek(uint64_t pos) {
+        reader.seekg(pos, reader.beg);
+        /* invalidate */
+        cur_off = cache_size;
+    }
+    bool set_cache_size(uint64_t cacheSize) {
+        uint64_t new_cache_size = (std::min)(cacheSize, fsize);
+        char *new_cache_buf = new char[new_cache_size];
+        if (new_cache_buf != nullptr) {
+            if (cache_buf != nullptr) {
+                delete[] cache_buf;
+            }
+            cache_size = new_cache_size;
+            cache_buf = new_cache_buf;
+            /* invalidate */
+            cur_off = cache_size;
+            return true;
+        }
+        return false;
+    }
+
   private:
     // underlying ifstream
     std::ifstream reader;

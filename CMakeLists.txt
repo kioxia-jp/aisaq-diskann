@@ -260,7 +260,7 @@ if (DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS)
 endif()
 
 if (NOT MSVC)
-    set(DISKANN_ASYNC_LIB aio)
+    set(DISKANN_ASYNC_LIB aio uring)
 endif()
 
 #Main compiler/linker settings 
