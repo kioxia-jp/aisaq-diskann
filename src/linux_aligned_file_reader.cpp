@@ -158,7 +158,7 @@ void LinuxAlignedFileReader::register_thread()
     }
     else
     {
-        diskann::cout << "allocating ctx: " << ctx << " to thread-id:" << my_id << std::endl;
+        //diskann::cout << "allocating ctx: " << ctx << " to thread-id:" << my_id << std::endl;
         ctx_map[my_id] = ctx;
     }
     lk.unlock();

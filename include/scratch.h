@@ -162,6 +162,10 @@ template <typename T> class SSDThreadData
     SSDQueryScratch<T> scratch;
     IOContext ctx;
 
+    class aisPQReaderContext *ais_pq_reader_ctx;
+    uint32_t ais_max_read_nodes;
+    std::vector<uint64_t> ais_scratch_mem_offset;
+
     SSDThreadData(size_t aligned_dim, size_t visited_reserve);
     void clear();
 };

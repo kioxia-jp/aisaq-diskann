@@ -10,6 +10,7 @@
 #include "index.h"
 #include "partition.h"
 #include "program_options_utils.hpp"
+#include "ais.h"
 
 namespace po = boost::program_options;
 
@@ -21,9 +22,9 @@ int main(int argc, char **argv)
     float B, M;
     bool append_reorder_data = false;
     bool use_opq = false;
-    bool rearrange = false;
-    int inline_pq = -1;
-    bool enable_inline_pq;
+    bool aisaq_rearrange = false;
+    int aisaq_inline_pq = -1;
+    bool aisaq_enable_inline_pq;
 
     po::options_description desc{
         program_options_utils::make_program_description("build_disk_index", "Build a disk-based index.")};
@@ -82,12 +83,13 @@ int main(int argc, char **argv)
                                        "internally where each node has a maximum F labels.");
         optional_configs.add_options()("label_type", po::value<std::string>(&label_type)->default_value("uint"),
                                        program_options_utils::LABEL_TYPE_DESCRIPTION);
+        /* aisaq related params/options */
         optional_configs.add_options()("inline_pq",
-                                       po::value<int32_t>(&inline_pq),
+                                       po::value<int32_t>(&aisaq_inline_pq),
                                        "set number of pq vectors to be stored inline within the node, "
                                        "pass 0 for auto, pass R for all, value must be <= R.");
         optional_configs.add_options()("rearrange",
-                                       po::bool_switch(&rearrange)->default_value(false),
+                                       po::bool_switch(&aisaq_rearrange)->default_value(false),
                                        "enable vectors rearanging, when enabled, each vector will be assigned "
                                        "and stored with a new id, in a way that the number of IOs needed to read "
                                        "the PQ vectors during search will be minimal");
@@ -103,17 +105,17 @@ int main(int argc, char **argv)
             return 0;
         }
         if (vm.count("version")) {
-            std::cout << "version 2.5-" << BUILD_NUMBER << " (aisaq)" << std::endl
-                    << "compiled: " __DATE__ << " " << __TIME__ << std::endl
-                    << "git revision: " << GIT_REV << std::endl;
+            std::cout << "diskann aisaq version " << AIS_VERSION << "-" << BUILD_NUMBER << std::endl
+                      << "compiled: " __DATE__ << " " << __TIME__ << std::endl
+                      << "git revision: " << GIT_REV << std::endl;
             return 0;
         }
-        enable_inline_pq = vm.count("inline_pq");
         po::notify(vm);
         if (vm["append_reorder_data"].as<bool>())
             append_reorder_data = true;
         if (vm["use_opq"].as<bool>())
             use_opq = true;
+        aisaq_enable_inline_pq = !vm["inline_pq"].empty();
     }
     catch (const std::exception &ex)
     {
@@ -153,7 +155,7 @@ int main(int argc, char **argv)
         }
     }
     /* validate inline_pq */
-    if (enable_inline_pq && (inline_pq < 0 || inline_pq > R)) {
+    if (aisaq_enable_inline_pq && (aisaq_inline_pq < 0 || aisaq_inline_pq > R)) {
         diskann::cerr << "Error: inline_pq value must be between 0 and R" << std::endl;
         return -1;
     }
@@ -163,8 +165,8 @@ int main(int argc, char **argv)
                          std::string(std::to_string(num_threads)) + " " + std::string(std::to_string(disk_PQ)) + " " +
                          std::string(std::to_string(append_reorder_data)) + " " +
                          std::string(std::to_string(build_PQ)) + " " + std::string(std::to_string(QD));
-                         params+= " " + std::string(std::to_string(inline_pq));
-                         params+= " " + std::string(std::to_string(rearrange));
+                         params+= " " + std::string(std::to_string(aisaq_inline_pq));
+                         params+= " " + std::string(std::to_string(aisaq_rearrange));
 
     try
     {

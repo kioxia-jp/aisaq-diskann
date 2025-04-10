@@ -981,6 +981,9 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
         if (inline_pq > 0) {
             assert(inline_pq <= width_u32);
             inline_pq_vectors = inline_pq;
+            if (rearrange && inline_pq_vectors < width_u32) {
+                max_node_len+= sizeof(uint32_t);
+            }
         } else {
             /* calculate the number of compressed vectors that can be appended to the node without increasing the index file size */
             uint32_t _n_inline = ais_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
@@ -990,18 +993,23 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
                 _n_inline = ais_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
             }
             inline_pq_vectors = _n_inline;
-            if (inline_pq_vectors == width_u32) {
-                if (rearrange) {
-                    /* ignore reaarange */
-                    diskann::cout << "all pq vectors will be stored inline, ignoring rearrange" << std::endl;
-                    rearrange = false;
-                } else {
-                    diskann::cout << "all pq vectors will be stored inline" << std::endl;
-                }
+        }
+        max_node_len+= inline_pq_vectors * pq_compressed_nbytes;
+        if (inline_pq_vectors == width_u32) {
+            if (rearrange) {
+                /* ignore reaarange */
+                diskann::cout << "all pq vectors will be stored inline, ignoring rearrange" << std::endl;
+                rearrange = false;
             } else {
-                diskann::cout << inline_pq_vectors << " (" << (inline_pq_vectors * 100) / width_u32
-                              << "%) PQ vectors will be stored inline" << std::endl;
+                diskann::cout << "all pq vectors will be stored inline" << std::endl;
             }
+        } else {
+            diskann::cout << inline_pq_vectors << " (" << (inline_pq_vectors * 100) / width_u32
+                          << "%) PQ vectors will be stored inline" << std::endl;
+        }
+    } else {
+        if (rearrange) {
+            max_node_len+= sizeof(uint32_t);
         }
     }
     uint32_t __nnodes, __nsectors, __remainder;
@@ -1052,7 +1060,7 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
         }
         std::unordered_map<uint32_t, std::vector<uint32_t>> filter_to_medoid_ids;
         struct vamana_read_context context(vamana_reader, vamana_reader_node_to_pos_map);
-        if (ais_generate_vectors_rearrange_map<T, uint32_t>(rearrange_sorter_nhops, rearranged_vectors_map, (uint32_t)npts_64,
+        if (ais_generate_vectors_rearrange_map<T, uint32_t>(ais_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
             pq_compressed_nbytes , width_u32, &medoid_u32, 1, filter_to_medoid_ids,
             read_node_nbrs_from_vamana<T, uint32_t>, &context) != 0) {
             throw ANNException("failed to generate rearranged vectors data"

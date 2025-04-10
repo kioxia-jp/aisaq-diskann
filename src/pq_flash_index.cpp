@@ -8,6 +8,8 @@
 #include "pq_scratch.h"
 #include "pq_flash_index.h"
 #include "cosine_similarity.h"
+#include "ais.h"
+#include "ais_pq_reader.h"
 
 #ifdef _WINDOWS
 #include "windows_aligned_file_reader.h"
@@ -141,6 +143,47 @@ void PQFlashIndex<T, LabelT>::setup_thread_data(uint64_t nthreads, uint64_t visi
 }
 
 template <typename T, typename LabelT>
+int PQFlashIndex<T, LabelT>::ais_init(const struct ais_search_config &ais_search_config, const char *index_prefix)
+{
+    if (!ais_search_config.aisaq) {
+        /* nothing todo */
+        return 0;
+    }
+    std::string pq_file_path;
+    if (_ais_rearranged_vectors) {
+        pq_file_path = std::string(index_prefix) + "_pq_compressed_rearranged.bin";
+    } else {
+        pq_file_path = std::string(index_prefix) + "_pq_compressed.bin";
+    }
+    _ais_pq_vectors_reader = aisPQReader::create_reader(ais_search_config.pq_io_engine,
+                                                pq_file_path.c_str(), _ais_rearranged_vectors);
+    if (_ais_pq_vectors_reader == nullptr) {
+        return -1;
+    }
+    ConcurrentQueue<SSDThreadData<T> *> thread_data_list;
+    uint64_t num_sectors_per_node = _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
+    while (!this->_thread_data.empty()) {
+        SSDThreadData<T> *data = this->_thread_data.pop();
+        data->ais_max_read_nodes = defaults::MAX_N_SECTOR_READS / num_sectors_per_node;
+        for (uint32_t i = 0; i < data->ais_max_read_nodes; i++) {
+            data->ais_scratch_mem_offset.push_back(num_sectors_per_node * i * defaults::SECTOR_LEN);
+        }
+        data->ais_pq_reader_ctx = _ais_pq_vectors_reader->create_context(_max_degree * ais_search_config.vector_beamwidth,
+                                                        ais_search_config.pq_read_page_cache_size);
+        if (data->ais_pq_reader_ctx == nullptr) {
+            std::cerr << "failed to initialize pq reader context" << std::endl;
+            return -1;
+        }
+        thread_data_list.push(data);
+    }
+    while (!thread_data_list.empty()) {
+        SSDThreadData<T> *data = thread_data_list.pop();
+        this->_thread_data.push(data);
+    }
+    return 0;
+}
+
+template <typename T, typename LabelT>
 std::vector<bool> PQFlashIndex<T, LabelT>::read_nodes(const std::vector<uint32_t> &node_ids,
                                                       std::vector<T *> &coord_buffers,
                                                       std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers)
@@ -233,7 +276,7 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::load_cache_
         {
             nodes_to_read.push_back(node_list[node_idx]);
             coord_buffers.push_back(_coord_cache_buf + node_idx * _aligned_dim);
-            nbr_buffers.emplace_back(0, _nhood_cache_buf + node_idx * (_max_degree + 1));
+            nbr_buffers.emplace_back(0, _nhood_cache_buf + node_idx * _max_degree);
         }
 
         // issue the reads
@@ -250,6 +293,229 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::load_cache_
         }
     }
     diskann::cout << "..done." << std::endl;
+}
+
+/* load pq cache according to specified policy
+   0: use bfs (breadth-first search) logic to
+      enumerate the nodes until the desired number of vectors is reached.
+      inline vectors are skipped.
+   1: direct-mapping, it will be forced when the number of cached vectors
+      is higher than a predefined thresholds */
+template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::ais_load_pq_cache(
+        const std::string pq_compressed_vectors_path, uint64_t pq_cache_size_bytes, uint32_t policy)
+{
+    if (_ais_inline_pq_vectors >= _max_degree) {
+        diskann::cout << "all pq vectors are stored inline, pq cache will not be used" << std::endl;
+        return;
+    }
+    uint64_t pq_cache_max_bytes_limit = (uint64_t)(double)(AIS_SEARCH_PQ_CACHE_MAX_DRAM_GB * (1 << 30));
+    if (pq_cache_size_bytes > pq_cache_max_bytes_limit) {
+        diskann::cout << "pq cache DRAM size will be limited to " << AIS_SEARCH_PQ_CACHE_MAX_DRAM_GB << "GB" << std::endl;
+        pq_cache_size_bytes = pq_cache_max_bytes_limit;
+    }
+    uint32_t pq_vec_size = _n_chunks * sizeof(uint8_t);
+    uint64_t pq_cache_max_vec = pq_cache_size_bytes / pq_vec_size;
+    uint64_t pq_cache_max_vec_limit = (_num_points * AIS_SEARCH_PQ_CACHE_MAX_VECTORS_PCNT) / 100;
+    if (pq_cache_max_vec > pq_cache_max_vec_limit) {
+        diskann::cout << "pq cache will be limited to " << AIS_SEARCH_PQ_CACHE_MAX_VECTORS_PCNT
+                      << "% of total vectors (" << pq_cache_max_vec_limit << ")" << std::endl;
+        pq_cache_max_vec = pq_cache_max_vec_limit;
+    }
+
+    std::ifstream pq_compressed_vectors_reader;
+    size_t pq_compressed_vectors_file_size = get_file_size(pq_compressed_vectors_path);
+    pq_compressed_vectors_reader.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+    try {
+        uint32_t pq_compressed_vectors_npts, pq_compressed_nbytes;
+        pq_compressed_vectors_reader.open(pq_compressed_vectors_path, std::ios::binary);
+        pq_compressed_vectors_reader.read((char *)&pq_compressed_vectors_npts, sizeof(uint32_t));
+        pq_compressed_vectors_reader.read((char *)&pq_compressed_nbytes, sizeof(uint32_t));
+        if (pq_compressed_vectors_npts != _num_points) {
+            throw ANNException("Mismatch in num_points between pq compressed vectors file and base file",
+                               -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        if (pq_compressed_nbytes != pq_vec_size) {
+            throw ANNException("Mismatch in pq vector size between pq compressed vectors file and base file",
+                               -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        if (pq_compressed_vectors_file_size != 8 + (size_t)pq_compressed_nbytes * (size_t)pq_compressed_vectors_npts) {
+            throw ANNException("Discrepancy in pq compressed vectors file size ", -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    } catch (std::system_error &e) {
+        throw FileException(pq_compressed_vectors_path, e, __FUNCSIG__, __FILE__, __LINE__);
+    }
+
+    /* allocate memory */
+    _ais_pq_vectors_cache_buf = new uint8_t[pq_cache_max_vec * pq_vec_size];
+    if (_ais_pq_vectors_cache_buf == nullptr) {
+        return;
+    }
+    diskann::cout << "allocated " << std::setprecision(4)
+                  << (float)(pq_cache_max_vec * pq_vec_size) / (1 << 20) << " MiB for pq cache" << std::endl;
+    _ais_pq_vectors_cache_count = pq_cache_max_vec;
+    _ais_pq_vectors_cache_direct = policy == ais_pq_cache_policy_direct ||
+            (policy == ais_pq_cache_policy_auto &&
+             (_ais_rearranged_vectors ||
+              (_ais_pq_vectors_cache_count == _num_points ||
+               _ais_pq_vectors_cache_count > AIS_SEARCH_PQ_CACHE_DIRECT_THRESHOLD_N ||
+               _ais_pq_vectors_cache_count > ((_num_points * AIS_SEARCH_PQ_CACHE_DIRECT_THRESHOLD_PCNT) / 100))));
+    if (_ais_pq_vectors_cache_direct) {
+        diskann::cout << "loading pq cache with " << pq_cache_max_vec << " compressed vectors using direct policy" << std::endl;
+        diskann::cout << "populating pq cache..." << std::flush;
+        /* skip header */
+        size_t tocopy = pq_cache_max_vec * pq_vec_size;
+        size_t offset = 0;
+        pq_compressed_vectors_reader.seekg((sizeof(uint32_t) * 2), pq_compressed_vectors_reader.beg);
+        while (tocopy > 0) {
+            size_t count = std::min(tocopy, (size_t)(1 << 20));
+            pq_compressed_vectors_reader.read((char *) _ais_pq_vectors_cache_buf + offset, count);
+            tocopy -= count;
+            offset += count;
+        }
+        pq_compressed_vectors_reader.close();
+        diskann::cout << "...done" << std::endl;
+        return;
+    }
+    if (policy != ais_pq_cache_policy_bfs && policy != ais_pq_cache_policy_auto) {
+        std::cerr << "unknown pq cache load policy, bfs policy will be used instead." << std::endl;
+    }
+    /* bfs */
+    bool shuffle = false;
+    std::random_device rng;
+    std::mt19937 urng(rng());
+
+    diskann::cout << "loading pq cache with " << pq_cache_max_vec << " compressed vectors using bfs policy" << std::endl;
+    diskann::cout << "preparing pq cache map..." << std::endl;
+    tsl::robin_set<uint32_t> node_set;
+    std::unique_ptr<tsl::robin_set<uint32_t>> cur_level, prev_level;
+    cur_level = std::make_unique<tsl::robin_set<uint32_t>>();
+    prev_level = std::make_unique<tsl::robin_set<uint32_t>>();
+
+    uint8_t *pq_cache_buf_it = _ais_pq_vectors_cache_buf;
+    uint32_t pq_cache_vec_count = 0;
+    uint64_t prev_pq_cache_vec_count = 0;
+    uint64_t prev_nodes_count = 0;
+
+    diskann::cout << "medoids:..." << std::flush;
+    for (uint64_t miter = 0; miter < _num_medoids && pq_cache_vec_count < pq_cache_max_vec; miter++) {
+        cur_level->insert(_medoids[miter]);
+        if (_ais_pq_vectors_cache_map.find(_medoids[miter]) == _ais_pq_vectors_cache_map.end()) {
+            _ais_pq_vectors_cache_map[_medoids[miter]] = pq_cache_buf_it;
+            pq_cache_buf_it += pq_vec_size;
+            pq_cache_vec_count++;
+        }
+    }
+    if (_filter_to_medoid_ids.size() > 0) {
+        for (auto &x: _filter_to_medoid_ids) {
+            for (auto &y: x.second) {
+                cur_level->insert(y);
+                if (pq_cache_vec_count < pq_cache_max_vec) {
+                    if (_ais_pq_vectors_cache_map.find(y) == _ais_pq_vectors_cache_map.end()) {
+                        _ais_pq_vectors_cache_map[y] = pq_cache_buf_it;
+                        pq_cache_buf_it += pq_vec_size;
+                        pq_cache_vec_count++;
+                    }
+                }
+            }
+        }
+    }
+    uint64_t block_size = 1024;
+    std::vector<uint32_t> nodes_to_read;
+    std::vector<T *> coord_buffers(block_size, nullptr);
+    std::vector<std::pair<uint32_t, uint32_t *>> nbr_buffers;
+    /* allocate nnbrs memory once */
+    for (uint32_t i = 0; i < block_size; i++) {
+        nbr_buffers.emplace_back(0, new uint32_t[_max_degree]);
+    }
+    diskann::cout << "... +" << pq_cache_vec_count - prev_pq_cache_vec_count << " vectors" << std::endl;
+    prev_pq_cache_vec_count = pq_cache_vec_count;
+    uint64_t lvl = 1;
+    while (pq_cache_vec_count < pq_cache_max_vec && cur_level->size() != 0) {
+        std::swap(prev_level, cur_level);
+        cur_level->clear();
+        std::vector<uint32_t> nodes_to_expand;
+        for (const uint32_t &id: *prev_level) {
+            if (node_set.find(id) != node_set.end()) {
+                continue;
+            }
+            node_set.insert(id);
+            nodes_to_expand.push_back(id);
+        }
+
+        if (shuffle) {
+            std::shuffle(nodes_to_expand.begin(), nodes_to_expand.end(), urng);
+        } else {
+            std::sort(nodes_to_expand.begin(), nodes_to_expand.end());
+        }
+
+        diskann::cout << "level: " << lvl << "..." << std::flush;
+        bool finish_flag = false;
+        uint64_t nblocks = DIV_ROUND_UP(nodes_to_expand.size(), block_size);
+        uint32_t progress_step = std::max(1lu, nblocks / 20);
+        for (size_t block = 0; block < nblocks && !finish_flag; block++) {
+            if ((block % progress_step) == 0) {
+                diskann::cout << "." << std::flush;
+            }
+            size_t start = block * block_size;
+            size_t end = (std::min)((block + 1) * block_size, nodes_to_expand.size());
+            for (size_t cur_pt = start; cur_pt < end; cur_pt++) {
+                nodes_to_read.push_back(nodes_to_expand[cur_pt]);
+            }
+
+            /* issue read requests */
+            auto read_status = read_nodes(nodes_to_read, coord_buffers, nbr_buffers);
+
+            for (uint32_t i = 0; i < read_status.size(); i++) {
+                if (read_status[i] == false) {
+                    continue;
+                }
+                uint32_t nnbrs = nbr_buffers[i].first;
+                uint32_t *nbrs = nbr_buffers[i].second;
+                if (pq_cache_vec_count < pq_cache_max_vec) {
+                    for (uint32_t j = _ais_inline_pq_vectors; j < nnbrs; j++) {
+                        if (_ais_pq_vectors_cache_map.find(nbrs[j]) == _ais_pq_vectors_cache_map.end()) {
+                            _ais_pq_vectors_cache_map[nbrs[j]] = pq_cache_buf_it;
+                            pq_cache_buf_it += pq_vec_size;
+                            pq_cache_vec_count++;
+                            if (pq_cache_vec_count == pq_cache_max_vec) {
+                                cur_level->clear();
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (pq_cache_vec_count < pq_cache_max_vec) {
+                    /* next level */
+                    for (uint32_t j = 0; j < nnbrs; j++) {
+                        if (node_set.find(nbrs[j]) == node_set.end()) {
+                            cur_level->insert(nbrs[j]);
+                        }
+                    }
+                }
+            }
+            nodes_to_read.clear();
+        }
+        diskann::cout << "... +" << node_set.size() - prev_nodes_count << " nodes +"
+                      << pq_cache_vec_count - prev_pq_cache_vec_count << " vectors"
+                      << " --> " << node_set.size() << " nodes " << pq_cache_vec_count << " vectors" << std::endl;
+        prev_pq_cache_vec_count = pq_cache_vec_count;
+        prev_nodes_count = node_set.size();
+        lvl++;
+    }
+    /* free nnbrs memory */
+    for (uint32_t i = 0; i < block_size; i++) {
+        delete [] nbr_buffers[i].second;
+    }
+    nbr_buffers.clear();
+
+    diskann::cout << "populating pq cache..." << std::flush;
+    for (auto iter = _ais_pq_vectors_cache_map.begin(); iter != _ais_pq_vectors_cache_map.end(); iter++) {
+        pq_compressed_vectors_reader.seekg((sizeof(uint32_t) * 2) + ((uint64_t)iter->first * pq_vec_size),
+                                           pq_compressed_vectors_reader.beg);
+        pq_compressed_vectors_reader.read((char *) iter->second, pq_vec_size);
+    }
+    pq_compressed_vectors_reader.close();
+    diskann::cout << "...done" << std::endl;
 }
 
 #ifdef EXEC_ENV_OLS
@@ -433,7 +699,7 @@ void PQFlashIndex<T, LabelT>::cache_bfs_levels(uint64_t num_nodes_to_cache, std:
             for (size_t cur_pt = start; cur_pt < end; cur_pt++)
             {
                 nodes_to_read.push_back(nodes_to_expand[cur_pt]);
-                nbr_buffers.emplace_back(0, new uint32_t[_max_degree + 1]);
+                nbr_buffers.emplace_back(0, new uint32_t[_max_degree]);
             }
 
             // issue read requests
@@ -755,21 +1021,24 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::set_univers
 
 #ifdef EXEC_ENV_OLS
 template <typename T, typename LabelT>
-int PQFlashIndex<T, LabelT>::load(MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix)
+int PQFlashIndex<T, LabelT>::load(MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix,
+                        const struct ais_search_config *ais_search_config)
 {
 #else
-template <typename T, typename LabelT> int PQFlashIndex<T, LabelT>::load(uint32_t num_threads, const char *index_prefix)
+template <typename T, typename LabelT> int PQFlashIndex<T, LabelT>::load(uint32_t num_threads, const char *index_prefix,
+                        const struct ais_search_config *ais_search_config)
 {
 #endif
     std::string pq_table_bin = std::string(index_prefix) + "_pq_pivots.bin";
     std::string pq_compressed_vectors = std::string(index_prefix) + "_pq_compressed.bin";
-    std::string _disk_index_file = std::string(index_prefix) + "_disk.index";
+    std::string disk_index_file = std::string(index_prefix) + "_disk.index";
+    std::string aisaq_deprecated_index_file = std::string(index_prefix) + "_aisaq.index";
 #ifdef EXEC_ENV_OLS
-    return load_from_separate_paths(files, num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
-                                    pq_compressed_vectors.c_str());
+    return load_from_separate_paths(files, num_threads, disk_index_file.c_str(), pq_table_bin.c_str(),
+                                    pq_compressed_vectors.c_str(), aisaq_deprecated_index_file.c_str(), ais_search_config);
 #else
-    return load_from_separate_paths(num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
-                                    pq_compressed_vectors.c_str());
+    return load_from_separate_paths(num_threads, disk_index_file.c_str(), pq_table_bin.c_str(),
+                                    pq_compressed_vectors.c_str(), aisaq_deprecated_index_file.c_str(), ais_search_config);
 #endif
 }
 
@@ -782,19 +1051,20 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(diskann::MemoryMappedFiles
 #else
 template <typename T, typename LabelT>
 int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                                      const char *pivots_filepath, const char *compressed_filepath)
+                                                      const char *pivots_filepath, const char *compressed_filepath,
+                                                      const char *aisaq_deprecated_index_filepath,
+                                                      const struct ais_search_config *ais_search_config)
 {
 #endif
     std::string pq_table_bin = pivots_filepath;
     std::string pq_compressed_vectors = compressed_filepath;
-    std::string _disk_index_file = index_filepath;
-    std::string medoids_file = std::string(_disk_index_file) + "_medoids.bin";
-    std::string centroids_file = std::string(_disk_index_file) + "_centroids.bin";
+    std::string medoids_file = std::string(index_filepath) + "_medoids.bin";
+    std::string centroids_file = std::string(index_filepath) + "_centroids.bin";
 
-    std::string labels_file = std ::string(_disk_index_file) + "_labels.txt";
-    std::string labels_to_medoids = std ::string(_disk_index_file) + "_labels_to_medoids.txt";
-    std::string dummy_map_file = std ::string(_disk_index_file) + "_dummy_map.txt";
-    std::string labels_map_file = std ::string(_disk_index_file) + "_labels_map.txt";
+    std::string labels_file = std ::string(index_filepath) + "_labels.txt";
+    std::string labels_to_medoids = std ::string(index_filepath) + "_labels_to_medoids.txt";
+    std::string dummy_map_file = std ::string(index_filepath) + "_dummy_map.txt";
+    std::string labels_map_file = std ::string(index_filepath) + "_labels_map.txt";
     size_t num_pts_in_label_file = 0;
 
     size_t pq_file_dim, pq_file_num_centroids;
@@ -804,7 +1074,8 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim, METADATA_SIZE);
 #endif
 
-    this->_disk_index_file = _disk_index_file;
+    this->_disk_index_file = (ais_search_config != nullptr && ais_search_config->aisaq_deprecated)
+                                    ? aisaq_deprecated_index_filepath : index_filepath;
 
     if (pq_file_num_centroids != 256)
     {
@@ -819,12 +1090,28 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     this->_aligned_dim = ROUND_UP(pq_file_dim, 8);
 
     size_t npts_u64, nchunks_u64;
+    if (ais_search_config != nullptr &&
+        (ais_search_config->aisaq || ais_search_config->aisaq_deprecated)) {
+        std::ifstream freader;
+        freader.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+        try {
+            freader.open(pq_compressed_vectors, std::ios::binary);
+            uint32_t val;
+            freader.read((char *) &val, sizeof(uint32_t));
+            npts_u64 = (size_t) val;
+            freader.read((char *) &val, sizeof(uint32_t));
+            nchunks_u64 = (size_t) val;
+            freader.close();
+        } catch (std::system_error &e) {
+            throw FileException(pq_compressed_vectors, e, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    } else {
 #ifdef EXEC_ENV_OLS
-    diskann::load_bin<uint8_t>(files, pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
+        diskann::load_bin<uint8_t>(files, pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #else
-    diskann::load_bin<uint8_t>(pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
+        diskann::load_bin<uint8_t>(pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #endif
-
+    }
     this->_num_points = npts_u64;
     this->_n_chunks = nchunks_u64;
 #ifdef EXEC_ENV_OLS
@@ -899,7 +1186,7 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
                 throw FileException(labels_to_medoids, e, __FUNCSIG__, __FILE__, __LINE__);
             }
         }
-        std::string univ_label_file = std ::string(_disk_index_file) + "_universal_label.txt";
+        std::string univ_label_file = std::string(index_filepath) + "_universal_label.txt";
 
 #ifdef EXEC_ENV_OLS
         if (files.fileExists(univ_label_file))
@@ -985,7 +1272,7 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
         throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
     }
 
-    std::string disk_pq_pivots_path = this->_disk_index_file + "_pq_pivots.bin";
+    std::string disk_pq_pivots_path = std::string(index_filepath) + "_pq_pivots.bin";
 #ifdef EXEC_ENV_OLS
     if (files.fileExists(disk_pq_pivots_path))
     {
@@ -1085,10 +1372,68 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
         READ_U64(index_metadata, this->_nvecs_per_sector);
     }
 
+    uint64_t __md_file_size, __md_max_degree, __md_rearranged_index;
+    READ_U64(index_metadata, __md_file_size); /* file_size */
+    READ_U64(index_metadata, __md_max_degree); /* max_degree */
+    READ_U64(index_metadata, __md_rearranged_index); /* rearranged_index */
+    if (get_file_size(_disk_index_file) != __md_file_size) {
+        std::stringstream stream;
+        stream << "Error loading index. Incorrect file size, file '" << _disk_index_file << "' may be corrupted. expected size is: "
+               << __md_file_size << " Bytes" << std::endl;
+        throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    uint64_t __max_max_degree;
+    _ais_rearranged_vectors = __md_rearranged_index != 0;
+    if (!_ais_rearranged_vectors) {
+        if (ais_search_config != nullptr && ais_search_config->aisaq &&
+            ais_search_config->pq_read_page_cache_size > 0) {
+            std::stringstream stream;
+            stream << "Error: pq-read-page-cache can only be used with vectors reordering" << std::endl;
+            throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+         }
+    }
+    __max_max_degree = ((_max_node_len - _disk_bytes_per_point - (_ais_rearranged_vectors ? sizeof(uint32_t) : 0)) / sizeof(uint32_t)) - 1;
+    if (ais_search_config != nullptr && ais_search_config->aisaq_deprecated) {
+        _max_degree = (_max_node_len - _disk_bytes_per_point - sizeof(uint32_t)) / (sizeof(uint32_t) + (sizeof(uint8_t) * _n_chunks));
+        assert(_n_chunks == __md_max_degree);
+    } else {
+        if (__md_max_degree != 0) {
+            /* aisaq */
+            if (__md_max_degree > __max_max_degree) {
+                std::stringstream stream;
+                stream << "Error loading index. Incorrect max graph degree (R) in metadata " << __md_max_degree << std::endl;
+                throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+            }
+            _max_degree = __md_max_degree;
+        } else {
+            _max_degree = __max_max_degree;
+        }
+    }
+    if (_max_degree > defaults::MAX_GRAPH_DEGREE)
+    {
+        std::stringstream stream;
+        stream << "Error loading index. Ensure that max graph degree (R) does "
+                  "not exceed "
+               << defaults::MAX_GRAPH_DEGREE << std::endl;
+        throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+    _ais_inline_pq_vectors = (_max_node_len - (_disk_bytes_per_point + ((_max_degree + 1) * sizeof(uint32_t)) + (_ais_rearranged_vectors ? sizeof(uint32_t) : 0)))
+                        / (_n_chunks * sizeof(uint8_t));
+    /* aisaq deprecated related validations */
+    if (ais_search_config != nullptr && ais_search_config->aisaq_deprecated) {
+        if (_ais_inline_pq_vectors != _max_degree || _ais_rearranged_vectors) {
+            std::stringstream stream;
+            stream << "Error loading index. non aisaq_deprecated index format." << std::endl;
+            throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    }
+
     diskann::cout << "Disk-Index File Meta-data: ";
     diskann::cout << "# nodes per sector: " << _nnodes_per_sector;
     diskann::cout << ", max node len (bytes): " << _max_node_len;
-    diskann::cout << ", max node degree: " << _max_degree << std::endl;
+    diskann::cout << ", max node degree: " << _max_degree;
+    diskann::cout << ", inline vectors: " << _ais_inline_pq_vectors;
+    diskann::cout << ", rearranged vectors: " << _ais_rearranged_vectors << std::endl;
 
 #ifdef EXEC_ENV_OLS
     delete[] bytes;
@@ -1167,7 +1512,7 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
         use_medoids_data_as_centroids();
     }
 
-    std::string norm_file = std::string(_disk_index_file) + "_max_base_norm.bin";
+    std::string norm_file = std::string(index_filepath) + "_max_base_norm.bin";
 
 #ifdef EXEC_ENV_OLS
     if (files.fileExists(norm_file) && metric == diskann::Metric::INNER_PRODUCT)
@@ -1237,31 +1582,33 @@ bool getNextCompletedRequest(std::shared_ptr<AlignedFileReader> &reader, IOConte
 template <typename T, typename LabelT>
 void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t k_search, const uint64_t l_search,
                                                  uint64_t *indices, float *distances, const uint64_t beam_width,
-                                                 const bool use_reorder_data, QueryStats *stats)
+                                                 const bool use_reorder_data, QueryStats *stats,
+                                                 const struct ais_search_config *ais_search_config)
 {
     cached_beam_search(query1, k_search, l_search, indices, distances, beam_width, std::numeric_limits<uint32_t>::max(),
-                       use_reorder_data, stats);
+                       use_reorder_data, stats, ais_search_config);
 }
 
 template <typename T, typename LabelT>
 void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t k_search, const uint64_t l_search,
                                                  uint64_t *indices, float *distances, const uint64_t beam_width,
                                                  const bool use_filter, const LabelT &filter_label,
-                                                 const bool use_reorder_data, QueryStats *stats)
+                                                 const bool use_reorder_data, QueryStats *stats,
+                                                 const struct ais_search_config *ais_search_config)
 {
     cached_beam_search(query1, k_search, l_search, indices, distances, beam_width, use_filter, filter_label,
-                       std::numeric_limits<uint32_t>::max(), use_reorder_data, stats);
+                       std::numeric_limits<uint32_t>::max(), use_reorder_data, stats, ais_search_config);
 }
 
 template <typename T, typename LabelT>
 void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t k_search, const uint64_t l_search,
                                                  uint64_t *indices, float *distances, const uint64_t beam_width,
                                                  const uint32_t io_limit, const bool use_reorder_data,
-                                                 QueryStats *stats)
+                                                 QueryStats *stats, const struct ais_search_config *ais_search_config)
 {
     LabelT dummy_filter = 0;
     cached_beam_search(query1, k_search, l_search, indices, distances, beam_width, false, dummy_filter, io_limit,
-                       use_reorder_data, stats);
+                       use_reorder_data, stats, ais_search_config);
 }
 
 template <typename T, typename LabelT>
@@ -1269,11 +1616,28 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                                                  uint64_t *indices, float *distances, const uint64_t beam_width,
                                                  const bool use_filter, const LabelT &filter_label,
                                                  const uint32_t io_limit, const bool use_reorder_data,
-                                                 QueryStats *stats)
+                                                 QueryStats *stats, const struct ais_search_config *ais_search_config)
 {
-
-    uint64_t num_sector_per_nodes = DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
-    if (beam_width > num_sector_per_nodes * defaults::MAX_N_SECTOR_READS)
+    if (ais_search_config != nullptr &&
+        (ais_search_config->aisaq || ais_search_config->aisaq_deprecated)) {
+        ais_cached_beam_search(query1, k_search, l_search,
+                               indices, distances, beam_width, use_filter, filter_label,
+                               io_limit, use_reorder_data, stats, ais_search_config);
+        return;
+    }
+    uint64_t num_sectors_per_node;
+    if (_nnodes_per_sector > 0) {
+        num_sectors_per_node = 1;
+    } else {
+        /* in this mode, we do not want to read any pq inline vectors, recalc node len */
+        uint32_t read_node_len = _disk_bytes_per_point + ((_max_degree + 1) * sizeof(uint32_t));
+        if (_ais_rearranged_vectors) {
+            read_node_len+= sizeof(uint32_t);
+        }
+        assert(read_node_len <= _max_node_len);
+        num_sectors_per_node = DIV_ROUND_UP(read_node_len, defaults::SECTOR_LEN);
+    }
+    if (beam_width > num_sectors_per_node * defaults::MAX_N_SECTOR_READS)
         throw ANNException("Beamwidth can not be higher than defaults::MAX_N_SECTOR_READS", -1, __FUNCSIG__, __FILE__,
                            __LINE__);
 
@@ -1331,8 +1695,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     // sector scratch
     char *sector_scratch = query_scratch->sector_scratch;
     uint64_t &sector_scratch_idx = query_scratch->sector_idx;
-    const uint64_t num_sectors_per_node =
-        _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
 
     // query <-> PQ chunk centers distances
     _pq_table.preprocess_query(query_rotated); // center the query and rotate if
@@ -1500,6 +1862,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                     cur_expanded_dist = _disk_pq_table.l2_distance( // disk_pq does not support OPQ yet
                         query_float, (uint8_t *)node_fp_coords_copy);
             }
+            assert(!_ais_rearranged_vectors);
             full_retset.push_back(Neighbor((uint32_t)cached_nhood.first, cur_expanded_dist));
 
             uint64_t nnbrs = cached_nhood.second.first;
@@ -1565,7 +1928,12 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 else
                     cur_expanded_dist = _disk_pq_table.l2_distance(query_float, (uint8_t *)data_buf);
             }
-            full_retset.push_back(Neighbor(frontier_nhood.first, cur_expanded_dist));
+            if (_ais_rearranged_vectors) {
+                uint32_t rid = *(node_buf + _max_degree + 1);
+                full_retset.push_back(Neighbor(frontier_nhood.first, cur_expanded_dist, rid));
+            } else {
+                full_retset.push_back(Neighbor(frontier_nhood.first, cur_expanded_dist));
+            }
             uint32_t *node_nbrs = (node_buf + 1);
             // compute node_nbrs <-> query dist in PQ space
             cpu_timer.reset();
@@ -1666,7 +2034,646 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     // copy k_search values
     for (uint64_t i = 0; i < k_search; i++)
     {
-        indices[i] = full_retset[i].id;
+        indices[i] = _ais_rearranged_vectors ? full_retset[i].rid : full_retset[i].id;
+        auto key = (uint32_t)indices[i];
+        if (_dummy_pts.find(key) != _dummy_pts.end())
+        {
+            indices[i] = _dummy_to_real_map[key];
+        }
+
+        if (distances != nullptr)
+        {
+            distances[i] = full_retset[i].distance;
+            if (metric == diskann::Metric::INNER_PRODUCT)
+            {
+                // flip the sign to convert min to max
+                distances[i] = (-distances[i]);
+                // rescale to revert back to original norms (cancelling the
+                // effect of base and query pre-processing)
+                if (_max_base_norm != 0)
+                    distances[i] *= (_max_base_norm * query_norm);
+            }
+        }
+    }
+
+#ifdef USE_BING_INFRA
+    ctx.m_completeCount = 0;
+#endif
+
+    if (stats != nullptr)
+    {
+        stats->total_us = (float)query_timer.elapsed();
+    }
+}
+
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint64_t k_search, const uint64_t l_search,
+                                                 uint64_t *indices, float *distances, const uint64_t beam_width,
+                                                 const bool use_filter, const LabelT &filter_label,
+                                                 const uint32_t io_limit, const bool use_reorder_data,
+                                                 QueryStats *stats, const struct ais_search_config *ais_search_config)
+{
+    uint64_t num_sectors_per_node =
+        _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
+    if (beam_width > num_sectors_per_node * defaults::MAX_N_SECTOR_READS)
+        throw ANNException("Beamwidth can not be higher than defaults::MAX_N_SECTOR_READS", -1, __FUNCSIG__, __FILE__,
+                           __LINE__);
+
+    ScratchStoreManager<SSDThreadData<T>> manager(this->_thread_data);
+    auto data = manager.scratch_space();
+    IOContext &ctx = data->ctx;
+    auto query_scratch = &(data->scratch);
+    auto pq_query_scratch = query_scratch->pq_scratch();
+
+    // reset query scratch
+    query_scratch->reset();
+    // copy query to thread specific aligned and allocated memory (for distance
+    // calculations we need aligned data)
+    float query_norm = 0;
+    T *aligned_query_T = query_scratch->aligned_query_T();
+    float *query_float = pq_query_scratch->aligned_query_float;
+    float *query_rotated = pq_query_scratch->rotated_query;
+
+    // if inner product, we also normalize the query and set the last coordinate
+    // to 0 (this is the extra coordinate used to convert MIPS to L2 search)
+    if (metric == diskann::Metric::INNER_PRODUCT)
+    {
+        for (size_t i = 0; i < this->_data_dim - 1; i++)
+        {
+            aligned_query_T[i] = query1[i];
+            query_norm += query1[i] * query1[i];
+        }
+        aligned_query_T[this->_data_dim - 1] = 0;
+
+        query_norm = std::sqrt(query_norm);
+
+        for (size_t i = 0; i < this->_data_dim - 1; i++)
+        {
+            aligned_query_T[i] = (T)(aligned_query_T[i] / query_norm);
+        }
+        pq_query_scratch->initialize(this->_data_dim, aligned_query_T);
+    }
+    else
+    {
+        for (size_t i = 0; i < this->_data_dim; i++)
+        {
+            aligned_query_T[i] = query1[i];
+        }
+        pq_query_scratch->initialize(this->_data_dim, aligned_query_T);
+    }
+
+    // pointers to buffers for data
+    T *data_buf = query_scratch->coord_scratch;
+    _mm_prefetch((char *)data_buf, _MM_HINT_T1);
+
+    // sector scratch
+    char *sector_scratch = query_scratch->sector_scratch;
+    uint64_t &sector_scratch_idx = query_scratch->sector_idx;
+    // query <-> PQ chunk centers distances
+    _pq_table.preprocess_query(query_rotated); // center the query and rotate if
+                                               // we have a rotation matrix
+    float *pq_dists = pq_query_scratch->aligned_pqtable_dist_scratch;
+    _pq_table.populate_chunk_distances(query_rotated, pq_dists);
+
+    uint32_t bv = ais_search_config->vector_beamwidth;
+
+    // query <-> neighbor list
+    float *dist_scratch = pq_query_scratch->aligned_dist_scratch;
+    uint8_t *pq_coord_scratch = pq_query_scratch->aligned_pq_coord_scratch;
+
+    // lambda to batch compute query<-> node distances in PQ space
+    auto compute_dists = [this, pq_coord_scratch, pq_dists](const uint32_t *ids, const uint64_t n_ids,
+                                    float *dists_out, aisPQReaderContext &ctx, QueryStats *stats
+    ) {
+        Timer timer;
+        timer.reset();
+        uint32_t io_count;
+        /* submit */
+        if (_ais_pq_vectors_reader->read_pq_vectors_submit(ctx, ids, n_ids, io_count) != 0) {
+            exit(-1);
+        }
+        uint32_t read_vec[n_ids];       /* index array */
+        uint8_t *read_coords[n_ids];
+        uint32_t rcount, i;
+#ifdef AIS_SEARCH_BATCH_PQ_DIST_LOOKUP
+        if (_ais_pq_vectors_reader->read_pq_vectors_wait_completion(ctx, read_vec, read_coords, n_ids, n_ids, rcount) != 0) {
+            exit(-1);
+        }
+        assert(rcount == n_ids);
+        for (i = 0; i < n_ids; i++) {
+            memcpy(pq_coord_scratch + (read_vec[i] * _n_chunks * sizeof(uint8_t)), read_coords[i], _n_chunks * sizeof(uint8_t));
+        }
+        if (stats != nullptr) {
+            stats->io_us += (float)timer.elapsed();
+            stats->n_ios += io_count;
+            stats->n_4k += io_count;
+            timer.reset();
+        }
+        diskann::pq_dist_lookup(pq_coord_scratch, n_ids, this->_n_chunks, pq_dists, dists_out);
+        if (stats != nullptr) {
+            stats->cpu_us += (float)timer.elapsed();
+            stats->n_cmps += (uint32_t)n_ids;
+        }
+#else /* AIS_SEARCH_BATCH_PQ_DIST_LOOKUP */
+        uint32_t min_events = 4, read_remain = n_ids;
+        /* wait completion */
+        do {
+            if (min_events > read_remain) {
+                min_events = read_remain;
+            }
+            if (_ais_pq_vectors_reader->read_pq_vectors_wait_completion(ctx, read_vec, read_coords, min_events, read_remain, rcount) != 0) {
+                exit(-1);
+            }
+            /* handle rcount vectors in read_vec */
+            for (i = 0; i < rcount; i++) {
+                diskann::pq_dist_lookup(read_coords[i], 1, this->_n_chunks, pq_dists, dists_out + read_vec[i]);
+            }
+            read_remain -= rcount;
+        } while (read_remain > 0);
+        if (stats != nullptr) {
+            stats->io_us += (float)timer.elapsed();
+            stats->n_ios += io_count;
+            stats->n_4k += io_count;
+            stats->n_cmps += (uint32_t)n_ids;
+        }
+#endif /* AIS_SEARCH_BATCH_PQ_DIST_LOOKUP */
+        /* done */
+        _ais_pq_vectors_reader->read_pq_vectors_done(ctx);
+    };
+
+    Timer query_timer, io_timer, cpu_timer;
+
+    tsl::robin_set<uint64_t> &visited = query_scratch->visited;
+    NeighborPriorityQueue &retset = query_scratch->retset;
+    retset.reserve(l_search);
+    std::vector<Neighbor> &full_retset = query_scratch->full_retset;
+
+    uint32_t best_medoid = 0;
+    float best_dist = (std::numeric_limits<float>::max)();
+    if (!use_filter) {
+        for (uint64_t cur_m = 0; cur_m < _num_medoids; cur_m++) {
+            float cur_expanded_dist =
+                _dist_cmp_float->compare(query_float, _centroid_data + _aligned_dim * cur_m, (uint32_t)_aligned_dim);
+            if (cur_expanded_dist < best_dist) {
+                best_medoid = _medoids[cur_m];
+                best_dist = cur_expanded_dist;
+            }
+        }
+        do {
+            if (_ais_pq_vectors_cache_direct) {
+                if (best_medoid < _ais_pq_vectors_cache_count) {
+                    /* vector is in cache */
+                    diskann::pq_dist_lookup(_ais_pq_vectors_cache_buf + (best_medoid * _n_chunks * sizeof(uint8_t)), 1,
+                                 _n_chunks, pq_dists, &best_dist);
+                    break;
+                }
+            } else {
+                auto _pq_cache_iter = _ais_pq_vectors_cache_map.find(best_medoid);
+                if (_pq_cache_iter != _ais_pq_vectors_cache_map.end()) {
+                    /* vector is in cache */
+                    diskann::pq_dist_lookup(_pq_cache_iter->second, 1, _n_chunks, pq_dists, &best_dist);
+                    break;
+                }
+            }
+            compute_dists(&best_medoid, 1, &best_dist, *data->ais_pq_reader_ctx, stats);
+        } while (false);
+    } else {
+        if (_filter_to_medoid_ids.find(filter_label) != _filter_to_medoid_ids.end()) {
+            const auto &medoid_ids = _filter_to_medoid_ids[filter_label];
+            for (uint64_t cur_m = 0; cur_m < medoid_ids.size(); cur_m++) {
+                // for filtered index, we dont store global centroid data as for unfiltered index, so we use PQ distance
+                // as approximation to decide closest medoid matching the query filter.
+                do {
+                    if (_ais_pq_vectors_cache_direct) {
+                        if (medoid_ids[cur_m] < _ais_pq_vectors_cache_count) {
+                            /* vector is in cache */
+                            diskann::pq_dist_lookup(
+                                    _ais_pq_vectors_cache_buf + (medoid_ids[cur_m] * _n_chunks * sizeof(uint8_t)), 1,
+                                    _n_chunks, pq_dists, dist_scratch);
+                            break;
+                        }
+                    } else {
+                        auto _pq_cache_iter = _ais_pq_vectors_cache_map.find(medoid_ids[cur_m]);
+                        if (_pq_cache_iter != _ais_pq_vectors_cache_map.end()) {
+                            /* vector is in cache */
+                            diskann::pq_dist_lookup(_pq_cache_iter->second, 1, _n_chunks, pq_dists, dist_scratch);
+                            break;
+                        }
+                    }
+                    compute_dists(&medoid_ids[cur_m], 1, dist_scratch, *data->ais_pq_reader_ctx, stats);
+                } while (false);
+                float cur_expanded_dist = dist_scratch[0];
+                if (cur_expanded_dist < best_dist) {
+                    best_medoid = medoid_ids[cur_m];
+                    best_dist = cur_expanded_dist;
+                }
+            }
+        } else {
+            throw ANNException("Cannot find medoid for specified filter.", -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    }
+    retset.insert(Neighbor(best_medoid, best_dist));
+    visited.insert(best_medoid);
+
+    uint32_t cmps = 0;
+    uint32_t hops = 0;
+    uint32_t num_ios = 0;
+
+    // cleared every iteration
+    std::vector<uint32_t> frontier;
+    frontier.reserve(2 * beam_width);
+    std::vector<std::pair<uint32_t, char *>> frontier_nhoods;
+    frontier_nhoods.reserve(2 * beam_width);
+    std::vector<AlignedRead> frontier_read_reqs;
+    frontier_read_reqs.reserve(2 * beam_width);
+    std::vector<std::pair<uint32_t, std::pair<uint32_t, uint32_t *>>> cached_nhoods;
+    cached_nhoods.reserve(2 * beam_width);
+
+    struct ais_node_placement np[bv];
+    uint32_t bv_count;
+    tsl::robin_map<uint32_t, char *> frontier_items;
+    T *node_fp_coords;
+    uint32_t nnbrs;
+    uint32_t *node_nbrs;
+    uint32_t agg_nnbrs;
+    uint32_t agg_nnbrs_inline;
+    uint32_t agg_node_nbrs[bv * _max_degree];
+    uint32_t agg_node_nbrs_inline[bv * _max_degree];
+    float agg_dist_scratch[bv * _max_degree];
+    float agg_dist_scratch_inline[bv * _max_degree];
+
+#ifdef AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS
+    std::vector<std::pair<uint32_t, uint8_t *>> agg_node_nbrs_pq_cache;
+#endif /* AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS */
+
+    float cur_expanded_dist;
+    std::vector<uint32_t> free_ids;
+    size_t position;
+    uint32_t id;
+    char *buf;
+    struct {
+        uint32_t *nbrs_list;
+        float *dist_list;
+        const uint32_t &size;
+    } agg_nbrs_lists[] = {
+            { agg_node_nbrs, agg_dist_scratch, agg_nnbrs },
+            { agg_node_nbrs_inline, agg_dist_scratch_inline, agg_nnbrs_inline },
+    };
+    /* initialize free nodes pool */
+    cpu_timer.reset();
+    while (retset.has_unexpanded_node() && num_ios < io_limit) {
+        bv_count = 0;
+        /* #select Bi neighbors */
+        /* #phase 1, iterate over closest unexpanded neighbours in retset (without expanding) */
+        /* #check if the first Bv nodes are available either in cache or in pre-fetched, if not, fetch Bi items */
+        /* Get first/next closest unexpanded Neighbour from retset (without expanding) */
+        if (retset.get_first_unexpanded_position(position, true)) {
+            do {
+                id = retset[position].id;
+                auto iter = _nhood_cache.find(id);
+                if (iter != _nhood_cache.end()) {
+                    if (bv_count < bv) {
+                        /* Add entry to Bv_list with _nhood_cache placement & node */
+                        np[bv_count].id = id;
+                        np[bv_count].is_in_cache = true;
+                        np[bv_count].pq_dist = retset[position].distance;
+                        np[bv_count].ptr = (char*)(&(iter.value()));
+                        bv_count++;
+                    }
+                    if (stats != nullptr) {
+                        stats->n_cache_hits++;
+                    }
+                } else {
+                    /* Otherwise, Add Neighbour’s vector ID to frontier_read_req list */
+                    auto frontier_iter = frontier_items.find(id);
+                    if (frontier_iter == frontier_items.end()) {
+                        /* Not in frontier map. Needs to be read */
+                        if (data->ais_scratch_mem_offset.empty()) {
+                            throw ANNException("No free nodes, increase defaults::MAX_N_SECTOR_READS.",
+                                       -1, __FUNCSIG__, __FILE__, __LINE__);
+                        }
+                        buf = sector_scratch + data->ais_scratch_mem_offset.back();
+                        frontier_read_reqs.emplace_back(get_node_sector((size_t)id) * defaults::SECTOR_LEN,
+                                                        num_sectors_per_node * defaults::SECTOR_LEN, buf);
+                        /* Add to frontier buffer */
+                        frontier_items[id] = buf;
+                        data->ais_scratch_mem_offset.pop_back();
+                    } else {
+                        /* In frontier map */
+                        buf = (char *)(frontier_iter->second);
+                    }
+                    if (bv_count < bv) {
+                        /* Add entry to Bv_list with frontier_nhood placement data ptr = null*/
+                        np[bv_count].id = id;
+                        np[bv_count].is_in_cache = false;
+                        np[bv_count].pq_dist = retset[position].distance;
+                        np[bv_count].ptr = buf;
+                        bv_count++;
+                    }
+                    /* If node_index < Bv */
+                    /* #assure that not more than Bi items will be read at once */
+                    /* If frontier_read_req list size is equal Bi */
+                    if (frontier_read_reqs.size() == beam_width) {
+                        break;
+                    }
+                }
+                if (bv_count <= bv && this->_count_visited_nodes) {
+                    reinterpret_cast<std::atomic<uint32_t> &>(this->_node_visit_counter[id].second).fetch_add(1);
+                }
+                /* #if Bv items are available without the need to read, skip read this time */
+                if (bv_count == bv && frontier_read_reqs.size() == 0) {
+                    break;
+                }
+            } while(retset.get_next_unexpanded_position(position, bv_count < bv));
+        }
+        /* #read frontier from disk */
+        /* If frontier_read_req is not empty */
+        if (!frontier_read_reqs.empty()) {
+            io_timer.reset();
+#ifdef USE_BING_INFRA
+#error "Windows is not supported"
+            reader->read(frontier_read_reqs, ctx,
+                         true); // asynhronous reader for Bing.
+#else
+            reader->read(frontier_read_reqs, ctx); // synchronous IO linux
+#endif
+            if (stats != nullptr) {
+                stats->io_us += (float)io_timer.elapsed();
+                stats->n_hops++;
+                switch (num_sectors_per_node) {
+                    case 1:
+                        stats->n_4k += frontier_read_reqs.size();
+                        break;
+                    case 2:
+                        stats->n_8k += frontier_read_reqs.size();
+                        break;
+                    default:
+                        stats->n_12k += frontier_read_reqs.size();
+                        break;
+                }
+                stats->n_ios += frontier_read_reqs.size();
+            }
+            num_ios += frontier_read_reqs.size();
+            frontier_read_reqs.clear();
+        }
+
+        cpu_timer.reset();
+        /* For each item in Bv_list */
+        agg_nnbrs = 0, agg_nnbrs_inline = 0;
+        for (uint32_t i = 0; i < bv_count; i++) {
+            /* #Expand the node depending on its placement */
+            /* Calculate node memory location according to its placement (cached_nhood, frontier_nhoods, prefetched_nhood) */
+            /* Calculate node distance (with precision saved as part of the index - full or disk_pq) */
+            /* Insert node to full_retset */
+            id = np[i].id;
+            uint32_t rid;
+            if (np[i].is_in_cache) {
+                auto global_cache_iter = _coord_cache.find(id);
+                node_fp_coords = global_cache_iter->second;
+                std::pair<uint32_t, uint32_t *> *cache_item = (std::pair<uint32_t, uint32_t *>*)(np[i].ptr);
+                nnbrs = cache_item->first;
+                node_nbrs = cache_item->second;
+                assert(!_ais_rearranged_vectors);
+            } else {
+                char *node_disk_buf = offset_to_node(np[i].ptr, id);
+                uint32_t *nhood_buf = offset_to_node_nhood(node_disk_buf);
+                node_fp_coords = offset_to_node_coords(node_disk_buf);
+                nnbrs = *nhood_buf;
+                node_nbrs = (nhood_buf + 1);
+                if ((uint64_t)node_fp_coords & 0x1fllu) {
+                    /* Copy only if not aligned to 32 */
+                    memcpy(data_buf, node_fp_coords, _disk_bytes_per_point);
+                    node_fp_coords = data_buf;
+                }
+                if (_ais_rearranged_vectors) {
+                    rid = *(nhood_buf + _max_degree + 1);
+                }
+                free_ids.push_back(id);
+            }
+            if (!_use_disk_index_pq) {
+                cur_expanded_dist = _dist_cmp->compare(aligned_query_T, node_fp_coords, (uint32_t)_aligned_dim);
+                if (stats != nullptr) {
+                    stats->n_cmps++;
+                }
+            } else {
+                if (_disk_bytes_per_point > _n_chunks * sizeof(uint8_t)) {
+                    if (metric == diskann::Metric::INNER_PRODUCT) {
+                        cur_expanded_dist = _disk_pq_table.inner_product(query_float, (uint8_t *) node_fp_coords);
+                    } else {
+                        cur_expanded_dist = _disk_pq_table.l2_distance( // disk_pq does not support OPQ yet
+                                query_float, (uint8_t *) node_fp_coords);
+                    }
+                    if (stats != nullptr) {
+                        stats->n_cmps++;
+                    }
+                } else {
+                    cur_expanded_dist = np[i].pq_dist;
+                }
+            }
+            /* Insert node to full_retset */
+            full_retset.push_back(Neighbor(id, cur_expanded_dist, rid));
+            uint32_t m = 0, idn;
+            /* note that node cache does not hold inline vectors
+               _ais_inline_pq_vectors > 0 only in version 2.2 or higher */
+            if (!np[i].is_in_cache && _ais_inline_pq_vectors > 0) {
+                /* handle inline vectors */
+                char *node_disk_buf = offset_to_node(np[i].ptr, id);
+                char *inline_vec_buf =
+                        node_disk_buf + _disk_bytes_per_point + ((_max_degree + 1) * sizeof(uint32_t));
+                if (_ais_rearranged_vectors) {
+                    inline_vec_buf += sizeof(uint32_t);
+                }
+                diskann::pq_dist_lookup((uint8_t *)inline_vec_buf, _ais_inline_pq_vectors,
+                                        _n_chunks, pq_dists, agg_dist_scratch_inline + agg_nnbrs_inline);
+                uint32_t __iv_count = 0;
+                for (; m < _ais_inline_pq_vectors; m++) {
+                    idn = node_nbrs[m];
+                    if (!visited.insert(idn).second) {
+                        /* already visited */
+                        continue;
+                    }
+                    if (use_filter) {
+                        if (!(point_has_label(idn, filter_label)) &&
+                            (!_use_universal_label || !point_has_label(idn, _universal_filter_label))) {
+                            /* filtered */
+                            continue;
+                        }
+                    } else {
+                        if (_dummy_pts.find(idn) != _dummy_pts.end()) {
+                            /* dummy */
+                            continue;
+                        }
+                    }
+                    agg_node_nbrs_inline[agg_nnbrs_inline + __iv_count] = idn;
+                    agg_dist_scratch_inline[agg_nnbrs_inline + __iv_count] = agg_dist_scratch_inline[agg_nnbrs_inline + m];
+                    __iv_count++;
+                }
+                agg_nnbrs_inline+= __iv_count;
+            }
+            for ( ; m < nnbrs; m++) {
+                idn = node_nbrs[m];
+                if (!visited.insert(idn).second) {
+                    /* already visited */
+                    continue;
+                }
+                if (use_filter) {
+                    if (!(point_has_label(idn, filter_label)) &&
+                        (!_use_universal_label || !point_has_label(idn, _universal_filter_label))) {
+                        /* filtered */
+                        continue;
+                    }
+                } else {
+                    if (_dummy_pts.find(idn) != _dummy_pts.end()) {
+                        /* dummy */
+                        continue;
+                    }
+                }
+                /* nhood non-inline vectors */
+                uint8_t *pqvb = nullptr;
+                if (_ais_pq_vectors_cache_direct) {
+                    if (idn < _ais_pq_vectors_cache_count) {
+                        pqvb = _ais_pq_vectors_cache_buf + (idn * _n_chunks * sizeof(uint8_t));
+                    }
+                } else {
+                    auto _pq_cache_iter = _ais_pq_vectors_cache_map.find(idn);
+                    if (_pq_cache_iter != _ais_pq_vectors_cache_map.end()) {
+                        pqvb = _pq_cache_iter->second;
+                    }
+                }
+                if (pqvb != nullptr) {
+                    /* vector is in cache */
+#ifdef AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS
+                    agg_node_nbrs_pq_cache.push_back(std::make_pair(idn, pqvb));
+#else  /* AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS */
+                    diskann::pq_dist_lookup(pqvb, 1, _n_chunks,
+                                            pq_dists, agg_dist_scratch_inline + agg_nnbrs_inline);
+                    agg_node_nbrs_inline[agg_nnbrs_inline] = idn;
+                    agg_nnbrs_inline++;
+#endif /* AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS */
+                    continue;
+                }
+                agg_node_nbrs[agg_nnbrs] = idn;
+                agg_nnbrs++;
+            }
+        }
+#ifdef AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS
+        /* copy all cached pq vectors into a single buffer and compute their distances */
+        if (agg_node_nbrs_pq_cache.size() > 0) {
+            uint32_t ci = 0;
+            do {
+                auto &item = agg_node_nbrs_pq_cache[ci];
+                memcpy(pq_coord_scratch + (ci * _n_chunks * sizeof(uint8_t)), item.second,
+                       _n_chunks * sizeof(uint8_t));
+                agg_node_nbrs_inline[agg_nnbrs_inline + ci] = item.first;
+                ci++;
+            } while (ci < agg_node_nbrs_pq_cache.size());
+            diskann::pq_dist_lookup(pq_coord_scratch, ci, _n_chunks,
+                                    pq_dists, agg_dist_scratch_inline + agg_nnbrs_inline);
+            agg_nnbrs_inline+= ci;
+            agg_node_nbrs_pq_cache.clear();
+        }
+#endif /* AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS */
+        if (stats != nullptr) {
+            stats->cpu_us += (float)cpu_timer.elapsed();
+        }
+        // compute node_nbrs <-> query dists in PQ space
+        //uint64_t max_vec_nr = 32;
+        //for (uint64_t iter_i = 0; iter_i < agg_nnbrs; iter_i += max_vec_nr){
+        //    if (agg_nnbrs - iter_i > max_vec_nr)
+        //        max_vec_nr = agg_nnbrs - iter_i;
+        //compute_dists(agg_node_nbrs + iter_i, max_vec_nr, agg_dist_scratch
+        if (agg_nnbrs > 0) {
+            compute_dists(agg_node_nbrs, agg_nnbrs, agg_dist_scratch, *data->ais_pq_reader_ctx, stats);
+        }
+        //}
+        cpu_timer.reset();
+        // process prefetched nhood
+        for (uint32_t nl = 0; nl < sizeof(agg_nbrs_lists) / sizeof(agg_nbrs_lists[0]); nl++) {
+            for (uint32_t m = 0; m < agg_nbrs_lists[nl].size; m++) {
+                uint32_t idn = agg_nbrs_lists[nl].nbrs_list[m];
+                float dist = agg_nbrs_lists[nl].dist_list[m];
+                Neighbor nn(idn, dist);
+                uint32_t removed_vec_id;
+                bool is_removed;
+                retset.insert_with_rem_info(nn, is_removed, removed_vec_id);
+                if (is_removed) {
+                    free_ids.push_back(removed_vec_id);
+                }
+            }
+        }
+        for (uint32_t free_it = 0; free_it < free_ids.size(); free_it++) {
+            auto it = frontier_items.find(free_ids[free_it]);
+            if (it != frontier_items.end()) {
+                data->ais_scratch_mem_offset.push_back(it.value() - sector_scratch);
+                frontier_items.erase(it);
+            }
+        }
+        free_ids.clear();
+        if (stats != nullptr) {
+            stats->cpu_us += (float)cpu_timer.elapsed();
+        }
+        //hops++;
+    }
+    /* clear page cache between queries */
+    //PqVectorsOnDisk::getInstance()->clear_page_cache(&data->pq_ctx);
+
+    // re-sort by distance
+    std::sort(full_retset.begin(), full_retset.end());
+
+    if (use_reorder_data)
+    {
+        if (!(this->_reorder_data_exists))
+        {
+            throw ANNException("Requested use of reordering data which does "
+                               "not exist in index "
+                               "file",
+                               -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+
+        std::vector<AlignedRead> vec_read_reqs;
+
+        if (full_retset.size() > k_search * FULL_PRECISION_REORDER_MULTIPLIER)
+            full_retset.erase(full_retset.begin() + k_search * FULL_PRECISION_REORDER_MULTIPLIER, full_retset.end());
+
+        for (size_t i = 0; i < full_retset.size(); ++i)
+        {
+            // MULTISECTORFIX
+            vec_read_reqs.emplace_back(VECTOR_SECTOR_NO(((size_t)full_retset[i].id)) * defaults::SECTOR_LEN,
+                                       defaults::SECTOR_LEN, sector_scratch + i * defaults::SECTOR_LEN);
+
+            if (stats != nullptr)
+            {
+                stats->n_4k++;
+                stats->n_ios++;
+            }
+        }
+
+        io_timer.reset();
+#ifdef USE_BING_INFRA
+        reader->read(vec_read_reqs, ctx, true); // async reader windows.
+#else
+        reader->read(vec_read_reqs, ctx); // synchronous IO linux
+#endif
+        if (stats != nullptr)
+        {
+            stats->io_us += io_timer.elapsed();
+        }
+
+        for (size_t i = 0; i < full_retset.size(); ++i)
+        {
+            auto id = full_retset[i].id;
+            // MULTISECTORFIX
+            auto location = (sector_scratch + i * defaults::SECTOR_LEN) + VECTOR_SECTOR_OFFSET(id);
+            full_retset[i].distance = _dist_cmp->compare(aligned_query_T, (T *)location, (uint32_t)this->_data_dim);
+        }
+
+        std::sort(full_retset.begin(), full_retset.end());
+    }
+
+    // copy k_search values
+    for (uint64_t i = 0; i < k_search; i++)
+    {
+        indices[i] = _ais_rearranged_vectors ? full_retset[i].rid : full_retset[i].id;
         auto key = (uint32_t)indices[i];
         if (_dummy_pts.find(key) != _dummy_pts.end())
         {
@@ -1780,6 +2787,21 @@ std::vector<std::uint8_t> PQFlashIndex<T, LabelT>::get_pq_vector(std::uint64_t v
 template <typename T, typename LabelT> std::uint64_t PQFlashIndex<T, LabelT>::get_num_points()
 {
     return _num_points;
+}
+
+template <typename T, typename LabelT> uint64_t PQFlashIndex<T, LabelT>::get_n_chunks()
+{
+    return _n_chunks;
+}
+
+template <typename T, typename LabelT> uint64_t PQFlashIndex<T, LabelT>::get_max_degree()
+{
+    return _max_degree;
+}
+
+template <typename T, typename LabelT> bool PQFlashIndex<T, LabelT>::get_rearranged_index()
+{
+    return _ais_rearranged_vectors;
 }
 
 // instantiations

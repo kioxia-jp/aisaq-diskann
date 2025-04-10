@@ -1,10 +1,10 @@
+// Copyright (c) KIOXIA Corporation. All rights reserved.
+// Licensed under the MIT license.
 #include "common_includes.h"
 
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
 #endif
-
-#include "ais_utils.h"
 
 #ifdef _WINDOWS
 #error "windows is not supported"
@@ -14,7 +14,9 @@
 #include "logger.h"
 #include "utils.h"
 #include "tsl/robin_set.h"
-//#include "pq_vectors_on_disk.h"
+
+#include "defaults.h"
+#include "ais_utils.h"
 
 namespace diskann
 {
@@ -60,22 +62,22 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
     };
     struct rearrange_nodes_sorter nodes_sorter;
     switch (rearrange_sorter) {
-        case rearrange_sorter_nhops:
+        case ais_rearrange_sorter_nhops:
             nodes_sorter.init(nullptr, "nhops");
             break;
-        case rearrange_sorter_random:
+        case ais_rearrange_sorter_random:
             nodes_sorter.init(nullptr, "nhops->random");
             break;
-        case rearrange_sorter_nhops_score:
+        case ais_rearrange_sorter_nhops_score:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_score, "nhops->score");
             break;
-        case rearrange_sorter_nhops_nnbrs:
+        case ais_rearrange_sorter_nhops_nnbrs:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_nnbrs, "nhops->nnbrs");
             break;
-        case rearrange_sorter_nhops_nnbrs_score:
+        case ais_rearrange_sorter_nhops_nnbrs_score:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_nnbrs_score, "nhops->nnbrs->score");
             break;
-        case rearrange_sorter_nhops_score_nnbrs:
+        case ais_rearrange_sorter_nhops_score_nnbrs:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_score_nnbrs, "nhops->score_nnbrs");
             break;
         default:
@@ -194,7 +196,7 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
                sort in descending order.
                it is much faster to push back all items and then sort. */
             std::sort(rnodes.rbegin(), rnodes.rend(), nodes_sorter.compare_function);
-        } else if (rearrange_sorter == rearrange_sorter_random) {
+        } else if (rearrange_sorter == ais_rearrange_sorter_random) {
             std::random_device rng;
             std::mt19937 urng(rng());
             std::shuffle(rnodes.begin(), rnodes.end(), urng);
@@ -479,6 +481,19 @@ int ais_create_aligned_rearranged_pq_compressed_vectors_file(const std::string &
                 page_size, rearrange_map, num_points, pq_vector_size);
     pq_compressed_vectors_reader.close();
     return ret;
+}
+
+const char *ais_get_io_engine_string(enum ais_pq_io_engine io_engine)
+{
+    switch (io_engine) {
+        case ais_pq_io_engine_aio:
+            return "aio";
+        case ais_pq_io_engine_uring:
+            return "uring";
+        default:
+            break;
+    }
+    return "unknown";
 }
 
 /* instatiations */

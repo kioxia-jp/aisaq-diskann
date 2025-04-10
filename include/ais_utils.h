@@ -1,8 +1,9 @@
-﻿#pragma once
+﻿// Copyright (c) KIOXIA Corporation. All rights reserved.
+// Licensed under the MIT license.
+#pragma once
 
 #include <vector>    // For std::vector
 
-#include "defaults.h"
 #include "ais.h"
 
 namespace diskann {
@@ -49,6 +50,8 @@ int ais_create_reversed_vectors_map(uint32_t *&reversed_vectors_map,
  calculate the maximal number of pq vectors that can be stored inline as part of the index node
 */
 uint32_t ais_calc_max_inline_pq_vectors(uint32_t max_node_len, uint32_t pq_nbytes, uint32_t max_degree);
+
+const char *ais_get_io_engine_string(enum ais_pq_io_engine io_engine);
 
 /*
  read pq vectors from unaligned pq compressed vectors file pq_compressed_vectors_path

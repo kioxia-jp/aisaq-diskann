@@ -58,7 +58,7 @@ const char *FAIL_IF_RECALL_BELOW =
                                                                  // still get my results even if the return code is -1?
 
 const char *NUMBER_OF_NODES_TO_CACHE = "Number of BFS nodes around medoid(s) to cache.  Default value: 0";
-const char *BEAMWIDTH = "Beamwidth for search. Set 0 to optimize internally.  Default value: 2";
+const char *BEAMWIDTH = "Index Beamwidth for search. Set 0 to optimize internally.  Default value: 2";
 const char *MAX_BUILD_DEGREE = "Maximum graph degree";
 const char *GRAPH_BUILD_COMPLEXITY =
     "Size of the search working set during build time.  This is the numer of neighbor/distance pairs to keep in memory "

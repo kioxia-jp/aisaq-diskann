@@ -14,12 +14,18 @@ namespace diskann
 struct Neighbor
 {
     unsigned id;
+    unsigned rid;       /* aisaq: used with rearranged index */
     float distance;
     bool expanded;
 
     Neighbor() = default;
 
     Neighbor(unsigned id, float distance) : id{id}, distance{distance}, expanded(false)
+    {
+    }
+
+    Neighbor(unsigned id, float distance, unsigned rid)
+        : id{id}, distance{distance}, expanded(false), rid(rid)
     {
     }
 
@@ -93,6 +99,47 @@ class NeighborPriorityQueue
         }
     }
 
+    void insert_with_rem_info(const Neighbor &nbr, bool &rem, uint32_t &id)
+    {
+        if (_size == _capacity && _data[_size - 1] < nbr) {
+            rem = true;
+            id = nbr.id;
+            return;
+        }
+
+        size_t lo = 0, hi = _size;
+        while (lo < hi) {
+            size_t mid = (lo + hi) >> 1;
+            if (nbr < _data[mid]) {
+                hi = mid;
+                // Make sure the same id isn't inserted into the set
+            } else if (_data[mid].id == nbr.id) {
+                rem = false;
+                return;
+            } else {
+                lo = mid + 1;
+            }
+        }
+
+        if (_size == _capacity) {
+            rem = true;
+            id = _data[_size - 1].id;
+        } else {
+            rem = false;
+        }
+
+        if (lo < _capacity) {
+            std::memmove(&_data[lo + 1], &_data[lo], (_size - lo) * sizeof(Neighbor));
+        }
+        _data[lo] = {nbr.id, nbr.distance};
+        if (_size < _capacity) {
+            _size++;
+        }
+        if (lo < _cur) {
+            _cur = lo;
+        }
+    }
+
     Neighbor closest_unexpanded()
     {
         _data[_cur].expanded = true;
@@ -107,6 +154,37 @@ class NeighborPriorityQueue
     bool has_unexpanded_node() const
     {
         return _cur < _size;
+    }
+
+    bool get_first_unexpanded_position(size_t &position, bool expand)
+    {
+        position = _cur;
+    	if (position < _size) {
+            if (expand) {
+                closest_unexpanded();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    bool get_next_unexpanded_position(size_t &position, bool expand)
+    {
+        position++;
+        while (position < _size && _data[position].expanded) {
+            position++;
+        }
+        if (position < _size) {
+            if (expand) {
+                if (position == _cur) {
+		            closest_unexpanded();
+                } else {
+                    _data[position].expanded = true;
+		        }
+            }
+            return true;
+        }
+        return false;
     }
 
     size_t size() const
