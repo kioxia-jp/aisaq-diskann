@@ -1073,7 +1073,7 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
             throw ANNException("failed to generate reversed rearranged vectors map"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);
         }
-        /* generate rearranged pq compressed vectors file instead of existing no-rearranged
+        /* generate rearranged pq compressed vectors file instead of existing non-rearranged
            (unaligned for DiskANN to load into DRAM) */
         std::string pq_compressed_reordered_vectors_path_tmp = pq_compressed_vectors_path + ".tmp";
         diskann::cout << "generating pq compressed vectors file " << pq_compressed_vectors_path << std::endl;

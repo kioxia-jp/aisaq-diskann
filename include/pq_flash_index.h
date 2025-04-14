@@ -55,6 +55,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT void ais_load_pq_cache(const std::string pq_compressed_vectors_path,
                                              uint64_t pq_cache_size_bytes, uint32_t policy);
 
+    DISKANN_DLLEXPORT uint8_t *ais_pq_cache_lookup(uint32_t id);
+
     DISKANN_DLLEXPORT int ais_init(const struct ais_search_config &ais_search_config, const char *index_prefix);
 
 #ifdef EXEC_ENV_OLS
@@ -125,7 +127,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     //
     DISKANN_DLLEXPORT std::vector<bool> read_nodes(const std::vector<uint32_t> &node_ids,
                                                    std::vector<T *> &coord_buffers,
-                                                   std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers);
+                                                   std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers,
+                                                   std::vector<uint8_t *> *ais_buffers = nullptr);
 
     DISKANN_DLLEXPORT std::vector<std::uint8_t> get_pq_vector(std::uint64_t vid);
     DISKANN_DLLEXPORT uint64_t get_num_points();
@@ -161,6 +164,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 
     // returns region of `node_buf` containing [COORD(T)]
     DISKANN_DLLEXPORT T *offset_to_node_coords(char *node_buf);
+
+    DISKANN_DLLEXPORT char *ais_offset_to_node_ais_data(char *node_buf);
 
     // index info for multi-node sectors
     // nhood of node `i` is in sector: [i / nnodes_per_sector]
@@ -239,6 +244,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     T *_coord_cache_buf = nullptr;
     tsl::robin_map<uint32_t, T *> _coord_cache;
 
+    uint8_t *_ais_node_cache_buf = nullptr;
+    tsl::robin_map<uint32_t, uint8_t *> _ais_node_cache;
     class aisPQReader *_ais_pq_vectors_reader = nullptr;
     uint8_t *_ais_pq_vectors_cache_buf = nullptr;
     tsl::robin_map<uint32_t, uint8_t *> _ais_pq_vectors_cache_map;

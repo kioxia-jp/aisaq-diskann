@@ -123,6 +123,11 @@ template <typename T, typename LabelT> inline T *PQFlashIndex<T, LabelT>::offset
     return (T *)(node_buf);
 }
 
+template <typename T, typename LabelT> inline char *PQFlashIndex<T, LabelT>::ais_offset_to_node_ais_data(char *node_buf)
+{
+    return node_buf + _disk_bytes_per_point + ((_max_degree + 1) * sizeof(uint32_t));
+}
+
 template <typename T, typename LabelT>
 void PQFlashIndex<T, LabelT>::setup_thread_data(uint64_t nthreads, uint64_t visited_reserve)
 {
@@ -145,7 +150,7 @@ void PQFlashIndex<T, LabelT>::setup_thread_data(uint64_t nthreads, uint64_t visi
 template <typename T, typename LabelT>
 int PQFlashIndex<T, LabelT>::ais_init(const struct ais_search_config &ais_search_config, const char *index_prefix)
 {
-    if (!ais_search_config.aisaq) {
+    if (!ais_search_config.aisaq && !ais_search_config.aisaq_deprecated) {
         /* nothing todo */
         return 0;
     }
@@ -160,6 +165,12 @@ int PQFlashIndex<T, LabelT>::ais_init(const struct ais_search_config &ais_search
     if (_ais_pq_vectors_reader == nullptr) {
         return -1;
     }
+    uint32_t max_ios;
+    if (ais_search_config.aisaq_deprecated) {
+        max_ios = 1;
+    } else {
+        max_ios = _max_degree * ais_search_config.vector_beamwidth;
+    }
     ConcurrentQueue<SSDThreadData<T> *> thread_data_list;
     uint64_t num_sectors_per_node = _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
     while (!this->_thread_data.empty()) {
@@ -168,8 +179,7 @@ int PQFlashIndex<T, LabelT>::ais_init(const struct ais_search_config &ais_search
         for (uint32_t i = 0; i < data->ais_max_read_nodes; i++) {
             data->ais_scratch_mem_offset.push_back(num_sectors_per_node * i * defaults::SECTOR_LEN);
         }
-        data->ais_pq_reader_ctx = _ais_pq_vectors_reader->create_context(_max_degree * ais_search_config.vector_beamwidth,
-                                                        ais_search_config.pq_read_page_cache_size);
+        data->ais_pq_reader_ctx = _ais_pq_vectors_reader->create_context(max_ios, ais_search_config.pq_read_page_cache_size);
         if (data->ais_pq_reader_ctx == nullptr) {
             std::cerr << "failed to initialize pq reader context" << std::endl;
             return -1;
@@ -186,10 +196,19 @@ int PQFlashIndex<T, LabelT>::ais_init(const struct ais_search_config &ais_search
 template <typename T, typename LabelT>
 std::vector<bool> PQFlashIndex<T, LabelT>::read_nodes(const std::vector<uint32_t> &node_ids,
                                                       std::vector<T *> &coord_buffers,
-                                                      std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers)
+                                                      std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers,
+                                                      std::vector<uint8_t *> *ais_buffers)
 {
     std::vector<AlignedRead> read_reqs;
     std::vector<bool> retval(node_ids.size(), true);
+    uint32_t ais_data_size;
+
+    if (ais_buffers != nullptr) {
+        ais_data_size = _ais_inline_pq_vectors * _n_chunks * sizeof(uint8_t);
+        if (_ais_rearranged_vectors) {
+            ais_data_size+= sizeof(uint32_t);
+        }
+    }
 
     char *buf = nullptr;
     auto num_sectors = _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
@@ -240,6 +259,10 @@ std::vector<bool> PQFlashIndex<T, LabelT>::read_nodes(const std::vector<uint32_t
             nbr_buffers[i].first = num_nbrs;
             memcpy(nbr_buffers[i].second, node_nhood + 1, num_nbrs * sizeof(uint32_t));
         }
+        if (ais_buffers != nullptr) {
+            char *ais_data = ais_offset_to_node_ais_data(node_buf);
+            memcpy((*ais_buffers)[i], ais_data, ais_data_size);
+        }
     }
 
     aligned_free(buf);
@@ -261,6 +284,16 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::load_cache_
     diskann::alloc_aligned((void **)&_coord_cache_buf, coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
     memset(_coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
 
+    // Allocate space for ais cache
+    uint32_t ais_data_len_u32 =
+            DIV_ROUND_UP(_ais_inline_pq_vectors * _n_chunks * sizeof(uint8_t), sizeof(uint32_t));
+    if (_ais_rearranged_vectors) {
+        ais_data_len_u32++;
+    }
+    if (ais_data_len_u32 > 0) {
+        _ais_node_cache_buf = (uint8_t *)(new uint32_t[num_cached_nodes * ais_data_len_u32]);
+    }
+
     size_t BLOCK_SIZE = 8;
     size_t num_blocks = DIV_ROUND_UP(num_cached_nodes, BLOCK_SIZE);
     for (size_t block = 0; block < num_blocks; block++)
@@ -272,15 +305,20 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::load_cache_
         std::vector<uint32_t> nodes_to_read;
         std::vector<T *> coord_buffers;
         std::vector<std::pair<uint32_t, uint32_t *>> nbr_buffers;
+        std::vector<uint8_t *> ais_buffers;
         for (size_t node_idx = start_idx; node_idx < end_idx; node_idx++)
         {
             nodes_to_read.push_back(node_list[node_idx]);
             coord_buffers.push_back(_coord_cache_buf + node_idx * _aligned_dim);
             nbr_buffers.emplace_back(0, _nhood_cache_buf + node_idx * _max_degree);
+            if (_ais_node_cache_buf != nullptr) {
+                ais_buffers.push_back(_ais_node_cache_buf + (node_idx * ais_data_len_u32 * sizeof(uint32_t)));
+            }
         }
 
         // issue the reads
-        auto read_status = read_nodes(nodes_to_read, coord_buffers, nbr_buffers);
+        auto read_status = read_nodes(nodes_to_read, coord_buffers, nbr_buffers,
+                            _ais_node_cache_buf != nullptr ? &ais_buffers : nullptr);
 
         // check for success and insert into the cache.
         for (size_t i = 0; i < read_status.size(); i++)
@@ -289,6 +327,9 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::load_cache_
             {
                 _coord_cache.insert(std::make_pair(nodes_to_read[i], coord_buffers[i]));
                 _nhood_cache.insert(std::make_pair(nodes_to_read[i], nbr_buffers[i]));
+                if (_ais_node_cache_buf != nullptr) {
+                    _ais_node_cache.insert(std::make_pair(nodes_to_read[i], ais_buffers[i]));
+                }
             }
         }
     }
@@ -516,6 +557,24 @@ template <typename T, typename LabelT> void PQFlashIndex<T, LabelT>::ais_load_pq
     }
     pq_compressed_vectors_reader.close();
     diskann::cout << "...done" << std::endl;
+}
+
+template <typename T, typename LabelT>
+uint8_t *PQFlashIndex<T, LabelT>::ais_pq_cache_lookup(uint32_t id)
+{
+    if (_ais_pq_vectors_cache_direct) {
+        if (id < _ais_pq_vectors_cache_count) {
+            /* vector is in cache */
+            return _ais_pq_vectors_cache_buf + (id * _n_chunks * sizeof(uint8_t));
+        }
+    } else {
+        auto _pq_cache_iter = _ais_pq_vectors_cache_map.find(id);
+        if (_pq_cache_iter != _ais_pq_vectors_cache_map.end()) {
+            /* vector is in cache */
+            return _pq_cache_iter->second;
+        }
+    }
+    return nullptr;
 }
 
 #ifdef EXEC_ENV_OLS
@@ -1335,16 +1394,6 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     READ_U64(index_metadata, medoid_id_on_file);
     READ_U64(index_metadata, _max_node_len);
     READ_U64(index_metadata, _nnodes_per_sector);
-    _max_degree = ((_max_node_len - _disk_bytes_per_point) / sizeof(uint32_t)) - 1;
-
-    if (_max_degree > defaults::MAX_GRAPH_DEGREE)
-    {
-        std::stringstream stream;
-        stream << "Error loading index. Ensure that max graph degree (R) does "
-                  "not exceed "
-               << defaults::MAX_GRAPH_DEGREE << std::endl;
-        throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
-    }
 
     // setting up concept of frozen points in disk index for streaming-DiskANN
     READ_U64(index_metadata, this->_num_frozen_points);
@@ -1862,9 +1911,12 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                     cur_expanded_dist = _disk_pq_table.l2_distance( // disk_pq does not support OPQ yet
                         query_float, (uint8_t *)node_fp_coords_copy);
             }
-            assert(!_ais_rearranged_vectors);
-            full_retset.push_back(Neighbor((uint32_t)cached_nhood.first, cur_expanded_dist));
-
+            if (_ais_rearranged_vectors) {
+                uint32_t rid = *((uint32_t *)_ais_node_cache.find(cached_nhood.first)->second);
+                full_retset.push_back(Neighbor(cached_nhood.first, cur_expanded_dist, rid));
+            } else {
+                full_retset.push_back(Neighbor(cached_nhood.first, cur_expanded_dist));
+            }
             uint64_t nnbrs = cached_nhood.second.first;
             uint32_t *node_nbrs = cached_nhood.second.second;
 
@@ -2135,7 +2187,7 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
     float *pq_dists = pq_query_scratch->aligned_pqtable_dist_scratch;
     _pq_table.populate_chunk_distances(query_rotated, pq_dists);
 
-    uint32_t bv = ais_search_config->vector_beamwidth;
+    uint32_t bv = ais_search_config->aisaq_deprecated ? beam_width : ais_search_config->vector_beamwidth;
 
     // query <-> neighbor list
     float *dist_scratch = pq_query_scratch->aligned_dist_scratch;
@@ -2154,28 +2206,7 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
         }
         uint32_t read_vec[n_ids];       /* index array */
         uint8_t *read_coords[n_ids];
-        uint32_t rcount, i;
-#ifdef AIS_SEARCH_BATCH_PQ_DIST_LOOKUP
-        if (_ais_pq_vectors_reader->read_pq_vectors_wait_completion(ctx, read_vec, read_coords, n_ids, n_ids, rcount) != 0) {
-            exit(-1);
-        }
-        assert(rcount == n_ids);
-        for (i = 0; i < n_ids; i++) {
-            memcpy(pq_coord_scratch + (read_vec[i] * _n_chunks * sizeof(uint8_t)), read_coords[i], _n_chunks * sizeof(uint8_t));
-        }
-        if (stats != nullptr) {
-            stats->io_us += (float)timer.elapsed();
-            stats->n_ios += io_count;
-            stats->n_4k += io_count;
-            timer.reset();
-        }
-        diskann::pq_dist_lookup(pq_coord_scratch, n_ids, this->_n_chunks, pq_dists, dists_out);
-        if (stats != nullptr) {
-            stats->cpu_us += (float)timer.elapsed();
-            stats->n_cmps += (uint32_t)n_ids;
-        }
-#else /* AIS_SEARCH_BATCH_PQ_DIST_LOOKUP */
-        uint32_t min_events = 4, read_remain = n_ids;
+        uint32_t rcount, min_events = 8, read_remain = n_ids, i;
         /* wait completion */
         do {
             if (min_events > read_remain) {
@@ -2186,7 +2217,13 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
             }
             /* handle rcount vectors in read_vec */
             for (i = 0; i < rcount; i++) {
+#ifdef AIS_SEARCH_BATCH_PQ_DIST_LOOKUP
+                /* batch pq disance lookup - copy to agg in memory */
+                memcpy(pq_coord_scratch + (read_vec[i] * _n_chunks * sizeof(uint8_t)), read_coords[i], _n_chunks * sizeof(uint8_t));
+#else /* AIS_SEARCH_BATCH_PQ_DIST_LOOKUP */
+                /* pq distance one at a time, no copy needed */
                 diskann::pq_dist_lookup(read_coords[i], 1, this->_n_chunks, pq_dists, dists_out + read_vec[i]);
+#endif /* AIS_SEARCH_BATCH_PQ_DIST_LOOKUP */
             }
             read_remain -= rcount;
         } while (read_remain > 0);
@@ -2195,6 +2232,14 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
             stats->n_ios += io_count;
             stats->n_4k += io_count;
             stats->n_cmps += (uint32_t)n_ids;
+#ifdef AIS_SEARCH_BATCH_PQ_DIST_LOOKUP
+            timer.reset();
+#endif /* AIS_SEARCH_BATCH_PQ_DIST_LOOKUP */
+        }
+#ifdef AIS_SEARCH_BATCH_PQ_DIST_LOOKUP
+        diskann::pq_dist_lookup(pq_coord_scratch, n_ids, this->_n_chunks, pq_dists, dists_out);
+        if (stats != nullptr) {
+            stats->cpu_us += (float)timer.elapsed();
         }
 #endif /* AIS_SEARCH_BATCH_PQ_DIST_LOOKUP */
         /* done */
@@ -2220,20 +2265,10 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
             }
         }
         do {
-            if (_ais_pq_vectors_cache_direct) {
-                if (best_medoid < _ais_pq_vectors_cache_count) {
-                    /* vector is in cache */
-                    diskann::pq_dist_lookup(_ais_pq_vectors_cache_buf + (best_medoid * _n_chunks * sizeof(uint8_t)), 1,
-                                 _n_chunks, pq_dists, &best_dist);
-                    break;
-                }
-            } else {
-                auto _pq_cache_iter = _ais_pq_vectors_cache_map.find(best_medoid);
-                if (_pq_cache_iter != _ais_pq_vectors_cache_map.end()) {
-                    /* vector is in cache */
-                    diskann::pq_dist_lookup(_pq_cache_iter->second, 1, _n_chunks, pq_dists, &best_dist);
-                    break;
-                }
+            uint8_t *pqvb = ais_pq_cache_lookup(best_medoid);
+            if (pqvb != nullptr) {
+                diskann::pq_dist_lookup(pqvb, 1,_n_chunks, pq_dists, &best_dist);
+                break;
             }
             compute_dists(&best_medoid, 1, &best_dist, *data->ais_pq_reader_ctx, stats);
         } while (false);
@@ -2244,21 +2279,10 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
                 // for filtered index, we dont store global centroid data as for unfiltered index, so we use PQ distance
                 // as approximation to decide closest medoid matching the query filter.
                 do {
-                    if (_ais_pq_vectors_cache_direct) {
-                        if (medoid_ids[cur_m] < _ais_pq_vectors_cache_count) {
-                            /* vector is in cache */
-                            diskann::pq_dist_lookup(
-                                    _ais_pq_vectors_cache_buf + (medoid_ids[cur_m] * _n_chunks * sizeof(uint8_t)), 1,
-                                    _n_chunks, pq_dists, dist_scratch);
-                            break;
-                        }
-                    } else {
-                        auto _pq_cache_iter = _ais_pq_vectors_cache_map.find(medoid_ids[cur_m]);
-                        if (_pq_cache_iter != _ais_pq_vectors_cache_map.end()) {
-                            /* vector is in cache */
-                            diskann::pq_dist_lookup(_pq_cache_iter->second, 1, _n_chunks, pq_dists, dist_scratch);
-                            break;
-                        }
+                    uint8_t *pqvb = ais_pq_cache_lookup(medoid_ids[cur_m]);
+                    if (pqvb != nullptr) {
+                        diskann::pq_dist_lookup(pqvb, 1,_n_chunks, pq_dists, dist_scratch);
+                        break;
                     }
                     compute_dists(&medoid_ids[cur_m], 1, dist_scratch, *data->ais_pq_reader_ctx, stats);
                 } while (false);
@@ -2433,7 +2457,9 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
                 std::pair<uint32_t, uint32_t *> *cache_item = (std::pair<uint32_t, uint32_t *>*)(np[i].ptr);
                 nnbrs = cache_item->first;
                 node_nbrs = cache_item->second;
-                assert(!_ais_rearranged_vectors);
+                if (_ais_rearranged_vectors) {
+                    rid = *((uint32_t *)_ais_node_cache.find(id)->second);
+                }
             } else {
                 char *node_disk_buf = offset_to_node(np[i].ptr, id);
                 uint32_t *nhood_buf = offset_to_node_nhood(node_disk_buf);
@@ -2475,15 +2501,19 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
             uint32_t m = 0, idn;
             /* note that node cache does not hold inline vectors
                _ais_inline_pq_vectors > 0 only in version 2.2 or higher */
-            if (!np[i].is_in_cache && _ais_inline_pq_vectors > 0) {
+            if (_ais_inline_pq_vectors > 0) {
                 /* handle inline vectors */
-                char *node_disk_buf = offset_to_node(np[i].ptr, id);
-                char *inline_vec_buf =
-                        node_disk_buf + _disk_bytes_per_point + ((_max_degree + 1) * sizeof(uint32_t));
-                if (_ais_rearranged_vectors) {
-                    inline_vec_buf += sizeof(uint32_t);
+                char *inline_pq_vectors_buff;
+                if (np[i].is_in_cache) {
+                    inline_pq_vectors_buff = (char *)_ais_node_cache.find(id)->second;
+                } else {
+                    char *node_buf = offset_to_node(np[i].ptr, id);
+                    inline_pq_vectors_buff = ais_offset_to_node_ais_data(node_buf);
                 }
-                diskann::pq_dist_lookup((uint8_t *)inline_vec_buf, _ais_inline_pq_vectors,
+                if (_ais_rearranged_vectors) {
+                    inline_pq_vectors_buff += sizeof(uint32_t);
+                }
+                diskann::pq_dist_lookup((uint8_t *)inline_pq_vectors_buff, _ais_inline_pq_vectors,
                                         _n_chunks, pq_dists, agg_dist_scratch_inline + agg_nnbrs_inline);
                 uint32_t __iv_count = 0;
                 for (; m < _ais_inline_pq_vectors; m++) {
@@ -2529,17 +2559,7 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
                     }
                 }
                 /* nhood non-inline vectors */
-                uint8_t *pqvb = nullptr;
-                if (_ais_pq_vectors_cache_direct) {
-                    if (idn < _ais_pq_vectors_cache_count) {
-                        pqvb = _ais_pq_vectors_cache_buf + (idn * _n_chunks * sizeof(uint8_t));
-                    }
-                } else {
-                    auto _pq_cache_iter = _ais_pq_vectors_cache_map.find(idn);
-                    if (_pq_cache_iter != _ais_pq_vectors_cache_map.end()) {
-                        pqvb = _pq_cache_iter->second;
-                    }
-                }
+                uint8_t *pqvb = ais_pq_cache_lookup(idn);
                 if (pqvb != nullptr) {
                     /* vector is in cache */
 #ifdef AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS

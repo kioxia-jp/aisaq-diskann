@@ -125,10 +125,6 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     }
 
     if (num_nodes_to_cache > 0) {
-        if (_pFlashIndex->get_rearranged_index()) {
-            diskann::cerr << "cache node is not supported when using rearranged index" << std::endl;
-            return -1;
-        }
         std::vector<uint32_t> node_list;
         diskann::cout << "Caching " << num_nodes_to_cache << " nodes around medoid(s)" << std::endl;
         _pFlashIndex->cache_bfs_levels(num_nodes_to_cache, node_list);
@@ -157,6 +153,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
             std::string pq_compressed_vectors_path = index_path_prefix + "_pq_compressed.bin";
             _pFlashIndex->ais_load_pq_cache(pq_compressed_vectors_path, pq_cache_size_bytes, diskann::ais_pq_cache_policy_auto);
         }
+    }
+    if (ais_search_config.aisaq || ais_search_config.aisaq_deprecated) {
         if (_pFlashIndex->ais_init(ais_search_config, index_path_prefix.c_str()) != 0) {
             return -1;
         }
@@ -563,6 +561,9 @@ int main(int argc, char **argv)
     struct diskann::ais_search_config aisaq_search_config;
     aisaq_search_config.aisaq_deprecated = aisaq_deprecated;
     aisaq_search_config.aisaq = aisaq;
+    aisaq_search_config.pq_io_engine = diskann::ais_pq_io_engine_aio;
+    aisaq_search_config.pq_cache_size = 0;
+    aisaq_search_config.pq_read_page_cache_size = 0;
     if (aisaq) {
         /* parse and validate aisaq params/options */
         /* vector_beamwidth */
@@ -576,7 +577,6 @@ int main(int argc, char **argv)
         }
         aisaq_search_config.vector_beamwidth = aisaq_pq_vector_beamwidth;
         /* pq_io_engine */
-        aisaq_search_config.pq_io_engine = diskann::ais_pq_io_engine_aio;
         if (aisaq_pq_read_io_engine == std::string("aio")) {
             aisaq_search_config.pq_io_engine = diskann::ais_pq_io_engine_aio;
         } else if (aisaq_pq_read_io_engine == std::string("uring")) {
@@ -586,7 +586,6 @@ int main(int argc, char **argv)
             return -1;
         }
         /* pq_cache_size & pq_cache_size_unit */
-        aisaq_search_config.pq_cache_size = 0;
         aisaq_search_config.pq_cache_size_unit = diskann::ais_size_unit_vectors;
         while (aisaq_pq_cache_size_string != std::string("")) {
             /* handle % */
@@ -639,7 +638,6 @@ int main(int argc, char **argv)
             break;
         };
         /* pq_read_page_cache_size */
-        aisaq_search_config.pq_read_page_cache_size = 0;
         while (aisaq_pq_read_page_cache_size_string != std::string("")) {
             /* handle B, just remove it, this will allow handling KB/MB/GB as well */
             if (aisaq_pq_read_page_cache_size_string.back() == 'B' || aisaq_pq_read_page_cache_size_string.back() == 'b') {

@@ -24,21 +24,6 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
         ais_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void *context);
 
 /*
-  load vectors rearrange map (also repair the map for backward compatibility)
-  on success, rearranged_vectors_map is allocated, the caller is responsible on deleting it
-  return 0 on success
-*/
-int ais_load_vectors_rearrange_map(uint32_t *&rearranged_vectors_map,
-        const std::string &rearranged_vectors_map_path, uint32_t num_points);
-
-/*
-  save vectors rearrange map
-  return 0 on success
-*/
-int ais_save_vectors_rearrange_map(uint32_t *rearranged_vectors_map,
-        const std::string &rearranged_vectors_map_path, uint32_t num_points);
-
-/*
  create a reversed map
  on success, reversed_vectors_map is allocated, the caller is responsible on deleting it
  return 0 on success
