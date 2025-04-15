@@ -434,26 +434,26 @@ int main(int argc, char **argv)
         /* aisaq params/options */
         optional_configs.add_options()("aisaq_deprecated",
                                        po::bool_switch(&aisaq_deprecated)->default_value(false),
-                                       "search using older version of aisaq index.");
+                                       "enable search with older version of aisaq index.");
         optional_configs.add_options()("aisaq",
                                        po::bool_switch(&aisaq)->default_value(false),
                                        "enable aisaq search.");
         optional_configs.add_options()("vector_beamwidth,V", po::value<uint32_t>(&aisaq_pq_vector_beamwidth)->default_value(1),
-                                       "Vector Beamwidth for search, value must be <= W.");
+                                       "the vector beamwidth to be used for search. value must be <= W. valid only with aisaq option.");
         optional_configs.add_options()("pq_read_io_engine",
                                         po::value<std::string>(&aisaq_pq_read_io_engine)->default_value("aio"),
                                         "pq vectors read io engine to use, one od {aio, uring}. "
                                         "valid only with aisaq option.");
         optional_configs.add_options()("pq_cache_size",
                                         po::value<std::string>(&aisaq_pq_cache_size_string)->default_value("0"),
-                                       "pq cache DRAM size in B, KB, MB, GB or in % of the total vectors. "
-                                       "you may use B/K/M/G/% suffix to specify this value, default is number of vectors (e.g. 0.8%, 0.6G, or 100000). "
-                                       "valid only with aisaq option.");
+                                       "PQ vectors cache DRAM size, may be specified in B, KB, MB, GB or in % of the total vectors. "
+                                       "you may use B/K/M/G/% suffix to specify this value, if no suffix, specified as the number of vectors "
+                                       "(e.g. 0.8%, 0.6G, or 100000). valid only with aisaq option.");
         optional_configs.add_options()("pq_read_page_cache_size",
                                        po::value<std::string>(&aisaq_pq_read_page_cache_size_string)->default_value("0"),
-                                       "pq read-page cache DRAM size per thread in B, KB, MB or GB. "
-                                       "you may use B/K/M/G suffix to specify this value, default unit is Bytes. "
-                                       "valid only with aisaq option.");
+                                       "PQ vectors read page cache DRAM size - per thread, may be specified in B, KB, MB or GB. "
+                                       "you may use B/K/M/G suffix to specify this value, if no suffix, specified in Bytes. "
+                                       "applicable only with index that was built with rearrange option. valid only with aisaq option.");
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
 
@@ -522,7 +522,7 @@ int main(int argc, char **argv)
     }
     else
     {
-        std::cout << "Unsupported distance function. Currently only L2/ Inner "
+        std::cerr << "Unsupported distance function. Currently only L2/ Inner "
                      "Product/Cosine are supported."
                   << std::endl;
         return -1;
@@ -530,13 +530,13 @@ int main(int argc, char **argv)
 
     if ((data_type != std::string("float")) && (metric == diskann::Metric::INNER_PRODUCT))
     {
-        std::cout << "Currently support only floating point data for Inner Product." << std::endl;
+        std::cerr << "Currently support only floating point data for Inner Product." << std::endl;
         return -1;
     }
 
     if (use_reorder_data && data_type != std::string("float"))
     {
-        std::cout << "Error: Reorder data for reordering currently only "
+        std::cerr << "Error: Reorder data for reordering currently only "
                      "supported for float data type."
                   << std::endl;
         return -1;
@@ -561,6 +561,8 @@ int main(int argc, char **argv)
     struct diskann::ais_search_config aisaq_search_config;
     aisaq_search_config.aisaq_deprecated = aisaq_deprecated;
     aisaq_search_config.aisaq = aisaq;
+    /* initialize with default values */
+    aisaq_search_config.vector_beamwidth = 1;
     aisaq_search_config.pq_io_engine = diskann::ais_pq_io_engine_aio;
     aisaq_search_config.pq_cache_size = 0;
     aisaq_search_config.pq_read_page_cache_size = 0;
@@ -592,7 +594,7 @@ int main(int argc, char **argv)
             if (aisaq_pq_cache_size_string.back() == '%') {
                 aisaq_pq_cache_size_string.pop_back();
                 if (!std::regex_match(aisaq_pq_cache_size_string, std::regex(R"(^\d+(\.\d+)?$)"))) {
-                    std::cout << "invalid pq_cache_size value." << std::endl;
+                    std::cerr << "invalid pq_cache_size value." << std::endl;
                     return -1;
                 }
                 float pcnt = atof(aisaq_pq_cache_size_string.c_str());
@@ -623,7 +625,7 @@ int main(int argc, char **argv)
                 aisaq_pq_cache_size_string.pop_back();
                 /* G/M/K may be set with decimal point */
                 if (!std::regex_match(aisaq_pq_cache_size_string, std::regex(R"(^\d+(\.\d+)?$)"))) {
-                    std::cout << "invalid pq_cache_size value." << std::endl;
+                    std::cerr << "invalid pq_cache_size value." << std::endl;
                     return -1;
                 }
                 aisaq_search_config.pq_cache_size = (uint64_t)(atof(aisaq_pq_cache_size_string.c_str()) * (1 << size_shift));
@@ -631,7 +633,7 @@ int main(int argc, char **argv)
             }
             /* Bytes/vectors, decimal point is not allowed here */
             if (!std::regex_match(aisaq_pq_cache_size_string, std::regex(R"(^\d+$)"))) {
-                std::cout << "invalid pq_cache_size value." << std::endl;
+                std::cerr << "invalid pq_cache_size value." << std::endl;
                 return -1;
             }
             aisaq_search_config.pq_cache_size = (uint64_t)(atoll(aisaq_pq_cache_size_string.c_str()));
@@ -656,7 +658,7 @@ int main(int argc, char **argv)
                 aisaq_pq_read_page_cache_size_string.pop_back();
                 /* G/M/K may be set with decimal point */
                 if (!std::regex_match(aisaq_pq_read_page_cache_size_string, std::regex(R"(^\d+(\.\d+)?$)"))) {
-                    std::cout << "invalid pq_read_page_cache_size value." << std::endl;
+                    std::cerr << "invalid pq_read_page_cache_size value." << std::endl;
                     return -1;
                 }
                 aisaq_search_config.pq_read_page_cache_size = (uint64_t)(atof(aisaq_pq_read_page_cache_size_string.c_str()) * (1 << size_shift));
@@ -664,12 +666,16 @@ int main(int argc, char **argv)
             }
             /* Bytes, decimal point is not allowed here */
             if (!std::regex_match(aisaq_pq_read_page_cache_size_string, std::regex(R"(^\d+$)"))) {
-                std::cout << "invalid pq_read_page_cache_size value." << std::endl;
+                std::cerr << "invalid pq_read_page_cache_size value." << std::endl;
                 return -1;
             }
             aisaq_search_config.pq_read_page_cache_size = (uint64_t)(atoll(aisaq_pq_read_page_cache_size_string.c_str()));
             break;
         };
+        if (aisaq_search_config.pq_read_page_cache_size > (AIS_SEARCH_PQ_READ_PAGE_CACHE_MAX_DRAM_MB * (1 << 20))) {
+            std::cerr << "pq_read_page_cache_size must be <= " << AIS_SEARCH_PQ_READ_PAGE_CACHE_MAX_DRAM_MB << "MiB" << std::endl;
+            return -1;
+        }
     }
 
     try

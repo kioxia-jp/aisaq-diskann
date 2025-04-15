@@ -1437,7 +1437,7 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
         if (ais_search_config != nullptr && ais_search_config->aisaq &&
             ais_search_config->pq_read_page_cache_size > 0) {
             std::stringstream stream;
-            stream << "Error: pq-read-page-cache can only be used with vectors reordering" << std::endl;
+            stream << "Error: pq-read-page-cache can only be used with rearranged index" << std::endl;
             throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
          }
     }
@@ -2146,20 +2146,23 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
     float *query_float = pq_query_scratch->aligned_query_float;
     float *query_rotated = pq_query_scratch->rotated_query;
 
-    // if inner product, we also normalize the query and set the last coordinate
-    // to 0 (this is the extra coordinate used to convert MIPS to L2 search)
-    if (metric == diskann::Metric::INNER_PRODUCT)
+    // normalization step. for cosine, we simply normalize the query
+    // for mips, we normalize the first d-1 dims, and add a 0 for last dim, since an extra coordinate was used to
+    // convert MIPS to L2 search
+    if (metric == diskann::Metric::INNER_PRODUCT || metric == diskann::Metric::COSINE)
     {
-        for (size_t i = 0; i < this->_data_dim - 1; i++)
+        uint64_t inherent_dim = (metric == diskann::Metric::COSINE) ? this->_data_dim : (uint64_t)(this->_data_dim - 1);
+        for (size_t i = 0; i < inherent_dim; i++)
         {
             aligned_query_T[i] = query1[i];
             query_norm += query1[i] * query1[i];
         }
-        aligned_query_T[this->_data_dim - 1] = 0;
+        if (metric == diskann::Metric::INNER_PRODUCT)
+            aligned_query_T[this->_data_dim - 1] = 0;
 
         query_norm = std::sqrt(query_norm);
 
-        for (size_t i = 0; i < this->_data_dim - 1; i++)
+        for (size_t i = 0; i < inherent_dim; i++)
         {
             aligned_query_T[i] = (T)(aligned_query_T[i] / query_norm);
         }
@@ -2414,13 +2417,7 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
         /* If frontier_read_req is not empty */
         if (!frontier_read_reqs.empty()) {
             io_timer.reset();
-#ifdef USE_BING_INFRA
-#error "Windows is not supported"
-            reader->read(frontier_read_reqs, ctx,
-                         true); // asynhronous reader for Bing.
-#else
             reader->read(frontier_read_reqs, ctx); // synchronous IO linux
-#endif
             if (stats != nullptr) {
                 stats->io_us += (float)io_timer.elapsed();
                 stats->n_hops++;
@@ -2669,11 +2666,7 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
         }
 
         io_timer.reset();
-#ifdef USE_BING_INFRA
-        reader->read(vec_read_reqs, ctx, true); // async reader windows.
-#else
         reader->read(vec_read_reqs, ctx); // synchronous IO linux
-#endif
         if (stats != nullptr)
         {
             stats->io_us += io_timer.elapsed();
@@ -2714,10 +2707,6 @@ void PQFlashIndex<T, LabelT>::ais_cached_beam_search(const T *query1, const uint
             }
         }
     }
-
-#ifdef USE_BING_INFRA
-    ctx.m_completeCount = 0;
-#endif
 
     if (stats != nullptr)
     {

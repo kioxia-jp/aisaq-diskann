@@ -521,14 +521,14 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
 
 template <typename T>
 int partition_with_ram_budget(const std::string data_file, const double sampling_rate, double ram_budget,
-                              size_t graph_degree, const std::string prefix_path, size_t k_base)
+                              size_t graph_degree, const std::string prefix_path, size_t k_base, int min_num_parts)
 {
     size_t train_dim;
     size_t num_train;
     float *train_data_float;
     size_t max_k_means_reps = 10;
 
-    int num_parts = 3;
+    int num_parts = min_num_parts;
     bool fit_in_ram = false;
 
     gen_random_slice<T>(data_file, sampling_rate, train_data_float, num_train, train_dim);
@@ -637,14 +637,15 @@ template DISKANN_DLLEXPORT int partition<float>(const std::string data_file, con
 template DISKANN_DLLEXPORT int partition_with_ram_budget<int8_t>(const std::string data_file,
                                                                  const double sampling_rate, double ram_budget,
                                                                  size_t graph_degree, const std::string prefix_path,
-                                                                 size_t k_base);
+                                                                 size_t k_base, int min_num_parts);
 template DISKANN_DLLEXPORT int partition_with_ram_budget<uint8_t>(const std::string data_file,
                                                                   const double sampling_rate, double ram_budget,
                                                                   size_t graph_degree, const std::string prefix_path,
-                                                                  size_t k_base);
+                                                                  size_t k_base, int min_num_parts);
 template DISKANN_DLLEXPORT int partition_with_ram_budget<float>(const std::string data_file, const double sampling_rate,
                                                                 double ram_budget, size_t graph_degree,
-                                                                const std::string prefix_path, size_t k_base);
+                                                                const std::string prefix_path, size_t k_base,
+                                                                int min_num_parts);
 
 template DISKANN_DLLEXPORT int retrieve_shard_data_from_ids<float>(const std::string data_file,
                                                                    std::string idmap_filename,
