@@ -1,18 +1,24 @@
 # AiSAQ-DiskANN
 
-AiSAQ (All-in-Storage ANNS with Product Quantization) is a DRAM-free method for approximate nearest neighbor search (ANNS).
+AiSAQ (All-in-Storage ANNS with Product Quantization) is a scalable, DRAM-free method for approximate nearest neighbor search (ANNS).
 This code forked off from [code for Microsoft DiskANN](https://github.com/Microsoft/DiskANN) algorithm.
 
 ### AiSAQ-DiskANN includes the following enhancements:
 1. Scalable, DRAM-free search - The PQ vectors are not loaded into DRAM during disk-index-search, instead they are being read from the media on demand.
 2. Inline PQ vectors - Some or all PQ vectors may be stored as part of the index node, saving IOs during search.
-3. Vectors rearrangement - Optimal rearrangement of the vectors in a way that the number of IOs needed to read the PQ vectors from the media during greedy search will be minimal.
-4. Multiple entry points - Generate multiple entry points in a way that the query search will start from a closer point. 
+3. Vectors rearrangement - Optimal rearrangement of the vectors in a way that the number of IOs needed to read the PQ vectors from the media during search will be minimal.
+4. Multiple entry points - Generate multiple entry points to minimize the number of search iterations. 
 5. Vector beamwidth - Tune the number of nodes that are expended on each greedy search iteration, this will parallelize PQ vectors read IOs.
 6. Greedy search algorithm improvements.
 7. Static PQ vectors cache - Common static cache of PQ vectors, populated during load prior search.
 8. Dynamic PQ vectors read cache - A dynamic page level read cache of PQ vectors, managed per-thread using LRU eviction policy.
+9. Support older version of AiSAQ index (deprecated).
 
+### Notes
+- When one or more AiSAQ features are selected for build, only AiSAQ index is being built. When none, non-AiSAQ index is being built.
+- There is no conversion tool from non-AiSAQ index to AiSAQ index.
+- Search in non-AiSAQ mode using an AiSAQ index is supported.
+- A private case in which all PQ vectors are stored inline is similar to the older version of AiSAQ index (deprecated).
 
 The usage of our additional AiSAQ indices is described below:
 
@@ -22,10 +28,10 @@ Please cite this software in your work as::
 ```
 @misc{aisaq-diskann,
     author = {Shimon Tsalmon},
-    title = {AiSAQ-DiskANN: DRAM-free implementation for ANNS based on DiskANN},
+    title = {AiSAQ-DiskANN: Scalable implementation for ANNS based on DiskANN},
     url = {https://github.com/KioxiaAmerica/aisaq-diskann},
-    version = {2.5},
-    year = {2024}
+    version = {0.2.0},
+    year = {2025}
 }
 ```
 

@@ -5,7 +5,7 @@
 
 namespace diskann {
 
-#define AIS_VERSION "2.5"
+#define AIS_VERSION "0.2.0"
 #define AIS_SEARCH_BATCH_PQ_DIST_LOOKUP
 #define AIS_SEARCH_AGGREGATE_CACHED_PQ_VECTORS
 #define AIS_SEARCH_PQ_CACHE_MAX_VECTORS_PCNT 100
@@ -13,8 +13,7 @@ namespace diskann {
 #define AIS_SEARCH_PQ_CACHE_DIRECT_THRESHOLD_PCNT   100
 #define AIS_SEARCH_PQ_CACHE_DIRECT_THRESHOLD_N      (10 << 20) /* 10m */
 #define AIS_SEARCH_PQ_READ_PAGE_CACHE_MAX_DRAM_MB   32.0f /* 32MB per thread */
-#define AIS_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT    (1 * diskann::defaults::SECTOR_LEN)
-#define AIS_REARRANGED_PQ_FILE_PAGE_SIZE_MAX        (4 * diskann::defaults::SECTOR_LEN)
+#define AIS_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT    diskann::defaults::SECTOR_LEN
 #define AIS_INVALID_VID                             0xffffffff
 
 enum ais_rearrange_sorter {

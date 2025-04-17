@@ -61,9 +61,41 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
 {
     diskann::cout << "Search parameters: #threads: " << num_threads;
     if (beamwidth <= 0)
-        diskann::cout << "beamwidth to be optimized for each L value" << std::flush;
+        diskann::cout << ", beamwidth to be optimized for each L value" << std::flush;
     else
-        diskann::cout << " beamwidth: " << beamwidth << std::flush;
+        diskann::cout << ", beamwidth: " << beamwidth << std::flush;
+
+    diskann::cout << ", search-mode: ";
+    if (ais_search_config.aisaq) {
+        diskann::cout << "aisaq, vector-beamwidth: " << ais_search_config.vector_beamwidth
+                      << ", pq-read-io-engine: " << ais_get_io_engine_string(ais_search_config.pq_io_engine)
+                      << ", pq-cache-size: ";
+        if (ais_search_config.pq_cache_size > 0) {
+            switch (ais_search_config.pq_cache_size_unit) {
+                case diskann::ais_size_unit_vectors:
+                    diskann::cout << ais_search_config.pq_cache_size << " vectors";
+                break;
+                case diskann::ais_size_unit_bytes:
+                    diskann::cout << ais_search_config.pq_cache_size << " bytes";
+                break;
+                case diskann::ais_size_unit_milli_percent:
+                    diskann::cout << ((double)ais_search_config.pq_cache_size / 1000) << " %";
+                break;
+            }
+        } else {
+            diskann::cout << "0";
+        }
+        diskann::cout << ", pq-read-page-cache-size: ";
+        if (ais_search_config.pq_read_page_cache_size > 0) {
+            diskann::cout << ais_search_config.pq_read_page_cache_size << " bytes (per thread)";
+        } else {
+            diskann::cout << "0";
+        }
+    } else if (ais_search_config.aisaq_deprecated) {
+        diskann::cout << "aisaq-deprecated";
+    } else {
+        diskann::cout << "disk-ann";
+    }
 
     if (search_io_limit == std::numeric_limits<uint32_t>::max())
         diskann::cout << "." << std::endl;
@@ -203,23 +235,6 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         }
         diskann::cout << "..done" << std::endl;
     }
-
-    diskann::cout << "starting ";
-    if (ais_search_config.aisaq) {
-        diskann::cout << "aisaq";
-    } else if (ais_search_config.aisaq_deprecated) {
-        diskann::cout << "aisaq_deprecated";
-    } else {
-        diskann::cout << "DiskANN";
-    }
-    diskann::cout << " search";
-    if (ais_search_config.aisaq) {
-        diskann::cout << " (vector-beamwidth: " << ais_search_config.vector_beamwidth
-                      << ", io-engine: " << ais_get_io_engine_string(ais_search_config.pq_io_engine)
-                      << ", pq-cache: " << (ais_search_config.pq_cache_size > 0 ? "yes" : "no")
-                      << ", pq-page-cache: " << (ais_search_config.pq_read_page_cache_size > 0 ? "yes" : "no") << ")";
-    }
-    diskann::cout << std::endl;
 
     diskann::cout.setf(std::ios_base::fixed, std::ios_base::floatfield);
     diskann::cout.precision(2);
@@ -434,15 +449,15 @@ int main(int argc, char **argv)
         /* aisaq params/options */
         optional_configs.add_options()("aisaq_deprecated",
                                        po::bool_switch(&aisaq_deprecated)->default_value(false),
-                                       "enable search with older version of aisaq index.");
+                                       "enable search with an older version of aisaq index.");
         optional_configs.add_options()("aisaq",
                                        po::bool_switch(&aisaq)->default_value(false),
-                                       "enable aisaq search.");
+                                       "enable aisaq search, when enabled, the PQ vectors will be read from the media on demand.");
         optional_configs.add_options()("vector_beamwidth,V", po::value<uint32_t>(&aisaq_pq_vector_beamwidth)->default_value(1),
                                        "the vector beamwidth to be used for search. value must be <= W. valid only with aisaq option.");
         optional_configs.add_options()("pq_read_io_engine",
                                         po::value<std::string>(&aisaq_pq_read_io_engine)->default_value("aio"),
-                                        "pq vectors read io engine to use, one od {aio, uring}. "
+                                        "pq vectors read io engine to use, one of {aio, uring}. "
                                         "valid only with aisaq option.");
         optional_configs.add_options()("pq_cache_size",
                                         po::value<std::string>(&aisaq_pq_cache_size_string)->default_value("0"),

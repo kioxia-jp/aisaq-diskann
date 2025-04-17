@@ -92,13 +92,13 @@ int main(int argc, char **argv)
                                        "pass 0 for auto, pass R value to store all PQ vectors inline, value must be <= R.");
         optional_configs.add_options()("rearrange",
                                        po::bool_switch(&aisaq_rearrange)->default_value(false),
-                                       "enable vectors rearranging, when enabled, each vector will be assigned "
+                                       "enable vectors rearrangement, when enabled, each vector will be assigned "
                                        "and stored with a new id, in a way that the number of IOs needed to read "
                                        "the PQ vectors during search will be minimal.");
         optional_configs.add_options()("num_entry_points",
                                        po::value<uint32_t>(&aisaq_num_entry_points),
                                        "number of entry points that should be generated to be used as a "
-                                       "search start points. value nust be between 1 and 256.");
+                                       "search start points. value must be between 1 and 256.");
 
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
