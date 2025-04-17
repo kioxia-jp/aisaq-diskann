@@ -19,6 +19,20 @@ The usage of our additional AiSAQ indices is described below:
 
 - [Commandline interface for building and search SSD-based AiSAQ indices](workflows/AiSAQ_index.md)
 
+### Installation notes
+libaio & liburing are used for asynchronous reading the PQ vectors from the media. Make sure these libraries are installed.
+```bash
+sudo apt install libaio-dev liburing-dev
+```
+You might need to increase aio-max-nr value. Append the following line to the file /etc/sysctl.conf
+```bash
+fs.aio-max-nr = 1048576
+```
+To apply new setting, run:
+```bash
+sysctl -p /etc/sysctl.conf
+```
+
 Please cite this software in your work as::
 ```
 @misc{aisaq-diskann,

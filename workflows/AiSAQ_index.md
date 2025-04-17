@@ -14,6 +14,7 @@ The additional build arguments are as follows:
 - When one or more AiSAQ features are selected, only AiSAQ index is being built. When none, non-AiSAQ index is being built.
 - There is no conversion tool from non-AiSAQ index to AiSAQ index.
 - A private case in which all PQ vectors are stored inline is similar to the older version of AiSAQ index (deprecated).
+- Building with multiple entry points does not have any impact on the index format, hence, supported in non-AiSAQ build as well.
 
 To search AiSAQ-index, use the `apps/search_disk_index` program.
 --------------------------------------------------------------------
