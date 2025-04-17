@@ -1,7 +1,8 @@
 # AiSAQ-DiskANN
 
 AiSAQ (All-in-Storage ANNS with Product Quantization) is a scalable, DRAM-free method for approximate nearest neighbor search (ANNS).
-This code forked off from [code for Microsoft DiskANN](https://github.com/Microsoft/DiskANN) algorithm.
+AiSAQ can now be tuned for best performance by storing all PQ vectors inline as part of the node, for minimum cost by reading the PQ vectors on demand, or, anywhere in between by storing some of the PQ vectors inline.
+This code was forked from [code for Microsoft DiskANN](https://github.com/Microsoft/DiskANN) algorithm. The index search is described in [our arXiv paper](https://arxiv.org/abs/2404.06004).
 
 ### AiSAQ-DiskANN includes the following enhancements:
 1. Scalable, DRAM-free search - The PQ vectors are not loaded into DRAM during disk-index-search, instead they are being read from the media on demand.
@@ -14,12 +15,6 @@ This code forked off from [code for Microsoft DiskANN](https://github.com/Micros
 8. Dynamic PQ vectors read cache - A dynamic page level read cache of PQ vectors, managed per-thread using LRU eviction policy.
 9. Support older version of AiSAQ index (deprecated).
 
-### Notes
-- When one or more AiSAQ features are selected for build, only AiSAQ index is being built. When none, non-AiSAQ index is being built.
-- There is no conversion tool from non-AiSAQ index to AiSAQ index.
-- Search in non-AiSAQ mode using an AiSAQ index is supported.
-- A private case in which all PQ vectors are stored inline is similar to the older version of AiSAQ index (deprecated).
-
 The usage of our additional AiSAQ indices is described below:
 
 - [Commandline interface for building and search SSD-based AiSAQ indices](workflows/AiSAQ_index.md)
@@ -27,10 +22,9 @@ The usage of our additional AiSAQ indices is described below:
 Please cite this software in your work as::
 ```
 @misc{aisaq-diskann,
-    author = {Shimon Tsalmon},
+    author = {Shimon Tsalmon, Kento Tatsuno, Daisuke Miyashita},
     title = {AiSAQ-DiskANN: Scalable implementation for ANNS based on DiskANN},
     url = {https://github.com/KioxiaAmerica/aisaq-diskann},
-    version = {0.2.0},
     year = {2025}
 }
 ```
