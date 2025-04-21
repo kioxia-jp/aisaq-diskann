@@ -588,7 +588,7 @@ int main(int argc, char **argv)
             std::cerr << "invalid vector_beamwidth value." << std::endl;
             return -1;
         }
-        if (aisaq_pq_vector_beamwidth > W) {
+        if (aisaq_pq_vector_beamwidth < 1 || aisaq_pq_vector_beamwidth > W) {
             std::cerr << "invalid vector_beamwidth value, must be between 1 and W (" << W << ")." << std::endl;
             return -1;
         }
