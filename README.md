@@ -33,7 +33,7 @@ To apply new setting, run:
 sysctl -p /etc/sysctl.conf
 ```
 
-#### Please cite this software in your work as::
+#### Please cite this software in your work as:
 ```
 @misc{aisaq-diskann,
     author = {Shimon Tsalmon, Kento Tatsuno, Daisuke Miyashita},

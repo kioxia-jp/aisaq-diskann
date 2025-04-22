@@ -46,8 +46,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 #else
     DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
                                                    const char *pivots_filepath, const char *compressed_filepath,
-                                                   const char *aisaq_deprecated_index_filepath,
-                                                   const struct ais_search_config *ais_search_config);
+                                                   const char *aisaq_deprecated_index_filepath = nullptr,
+                                                   const struct ais_search_config *ais_search_config = nullptr);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
