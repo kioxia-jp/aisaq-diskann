@@ -10,7 +10,7 @@
 #include "index.h"
 #include "partition.h"
 #include "program_options_utils.hpp"
-#include "ais.h"
+#include "aisaq.h"
 
 namespace po = boost::program_options;
 
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
             return 0;
         }
         if (vm.count("version")) {
-            std::cout << "diskann aisaq version " << AIS_VERSION << "-" << BUILD_NUMBER << std::endl
+            std::cout << "diskann aisaq version " << AISAQ_VERSION << "-" << BUILD_NUMBER << std::endl
                       << "compiled: " __DATE__ << " " << __TIME__ << std::endl
                       << "git revision: " << GIT_REV << std::endl;
             return 0;

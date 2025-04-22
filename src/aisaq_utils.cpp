@@ -16,17 +16,17 @@
 #include "tsl/robin_set.h"
 
 #include "defaults.h"
-#include "ais_utils.h"
+#include "aisaq_utils.h"
 
 namespace diskann
 {
 
 /* todo: control rearrange logic at runtime */
 template <typename T, typename LabelT>
-int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
     uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
     std::unordered_map<LabelT, std::vector<uint32_t>> &filter_to_medoid_ids,
-    ais_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void *context)
+    aisaq_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void *context)
 {
     if (num_points == 0 || num_medoids == 0) {
         return -1;
@@ -62,22 +62,22 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
     };
     struct rearrange_nodes_sorter nodes_sorter;
     switch (rearrange_sorter) {
-        case ais_rearrange_sorter_nhops:
+        case aisaq_rearrange_sorter_nhops:
             nodes_sorter.init(nullptr, "nhops");
             break;
-        case ais_rearrange_sorter_random:
+        case aisaq_rearrange_sorter_random:
             nodes_sorter.init(nullptr, "nhops->random");
             break;
-        case ais_rearrange_sorter_nhops_score:
+        case aisaq_rearrange_sorter_nhops_score:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_score, "nhops->score");
             break;
-        case ais_rearrange_sorter_nhops_nnbrs:
+        case aisaq_rearrange_sorter_nhops_nnbrs:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_nnbrs, "nhops->nnbrs");
             break;
-        case ais_rearrange_sorter_nhops_nnbrs_score:
+        case aisaq_rearrange_sorter_nhops_nnbrs_score:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_nnbrs_score, "nhops->nnbrs->score");
             break;
-        case ais_rearrange_sorter_nhops_score_nnbrs:
+        case aisaq_rearrange_sorter_nhops_score_nnbrs:
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_score_nnbrs, "nhops->score_nnbrs");
             break;
         default:
@@ -92,7 +92,7 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
     }
     /* init */
     for (uint32_t i = 0; i < num_points; i++) {
-        rearranged_vectors_map[i] = AIS_INVALID_VID;
+        rearranged_vectors_map[i] = AISAQ_INVALID_VID;
     }
 
     diskann::cout << "generating vectors rearrange mapping data (using sorter: "
@@ -111,7 +111,7 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
         }
     }
     for (const uint32_t &id: *cur_level) {
-        if (rearranged_vectors_map[id] == AIS_INVALID_VID) {
+        if (rearranged_vectors_map[id] == AISAQ_INVALID_VID) {
             rearranged_vectors_map[id] = vid_hover++;
         }
     }
@@ -196,7 +196,7 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
                sort in descending order.
                it is much faster to push back all items and then sort. */
             std::sort(rnodes.rbegin(), rnodes.rend(), nodes_sorter.compare_function);
-        } else if (rearrange_sorter == ais_rearrange_sorter_random) {
+        } else if (rearrange_sorter == aisaq_rearrange_sorter_random) {
             std::random_device rng;
             std::mt19937 urng(rng());
             std::shuffle(rnodes.begin(), rnodes.end(), urng);
@@ -206,7 +206,7 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
         for (uint32_t i = 0; i < rnodes.size(); i++) {
             const struct rearrange_node &rnode = rnodes[i];
             for (const uint32_t &id: rnode.nbrs) {
-                if (rearranged_vectors_map[id] == AIS_INVALID_VID) {
+                if (rearranged_vectors_map[id] == AISAQ_INVALID_VID) {
                     rearranged_vectors_map[id] = vid_hover++;
                     cur_level->insert(id);
                 }
@@ -224,7 +224,7 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
     if (vid_hover < num_points) {
         diskann::cout << num_points - vid_hover << " unreferenced vectors" << std::endl;
         for (uint32_t i = 0; i < num_points; i++) {
-            if (rearranged_vectors_map[i] == AIS_INVALID_VID) {
+            if (rearranged_vectors_map[i] == AISAQ_INVALID_VID) {
                 rearranged_vectors_map[i] = vid_hover++;
             }
         }
@@ -232,7 +232,7 @@ int ais_generate_vectors_rearrange_map(enum ais_rearrange_sorter rearrange_sorte
     return 0;
 }
 
-int ais_create_reversed_vectors_map(uint32_t *&reversed_vectors_map, const uint32_t *vectors_map, uint32_t num_points)
+int aisaq_create_reversed_vectors_map(uint32_t *&reversed_vectors_map, const uint32_t *vectors_map, uint32_t num_points)
 {
     reversed_vectors_map = new uint32_t[num_points];
     if (reversed_vectors_map == nullptr) {
@@ -241,11 +241,11 @@ int ais_create_reversed_vectors_map(uint32_t *&reversed_vectors_map, const uint3
     }
     uint32_t i;
     for (i = 0; i < num_points; i++) {
-        reversed_vectors_map[i] = AIS_INVALID_VID;
+        reversed_vectors_map[i] = AISAQ_INVALID_VID;
     }
     for (i = 0; i < num_points; i++) {
         uint32_t rid = vectors_map[i];
-        if (reversed_vectors_map[rid] != AIS_INVALID_VID) {
+        if (reversed_vectors_map[rid] != AISAQ_INVALID_VID) {
             break;
         }
         reversed_vectors_map[rid] = i;
@@ -259,7 +259,7 @@ int ais_create_reversed_vectors_map(uint32_t *&reversed_vectors_map, const uint3
     return 0;
 }
 
-uint32_t ais_calc_max_inline_pq_vectors(uint32_t max_node_len, uint32_t pq_nbytes, uint32_t max_degree)
+uint32_t aisaq_calc_max_inline_pq_vectors(uint32_t max_node_len, uint32_t pq_nbytes, uint32_t max_degree)
 {
     if (max_node_len >= defaults::SECTOR_LEN) {
         /* node size >= 4KiB */
@@ -271,7 +271,7 @@ uint32_t ais_calc_max_inline_pq_vectors(uint32_t max_node_len, uint32_t pq_nbyte
     return std::min(max_degree, (uint32_t)((defaults::SECTOR_LEN - (_nnodes * max_node_len)) / (_nnodes * pq_nbytes)));
 }
 
-int ais_create_aligned_rearranged_pq_compressed_vectors_file(std::ifstream &pq_compressed_vectors_reader,
+int aisaq_create_aligned_rearranged_pq_compressed_vectors_file(std::ifstream &pq_compressed_vectors_reader,
             const std::string &aligned_rearranged_pq_compressed_vectors_path,
             uint32_t page_size, uint32_t *rearrange_map, uint32_t num_points, uint32_t pq_vector_size)
 {
@@ -297,8 +297,8 @@ int ais_create_aligned_rearranged_pq_compressed_vectors_file(std::ifstream &pq_c
             }
             /* write the header */
             memset(page_buff, 0, page_size);
-            struct ais_rearranged_pq_compressed_vectors_file_header *file_header =
-                        (struct ais_rearranged_pq_compressed_vectors_file_header *)page_buff;
+            struct aisaq_rearranged_pq_compressed_vectors_file_header *file_header =
+                        (struct aisaq_rearranged_pq_compressed_vectors_file_header *)page_buff;
             file_header->num_vectors = num_points;
             file_header->vector_size = pq_vector_size;
             file_header->page_size = page_size;
@@ -354,7 +354,7 @@ int ais_create_aligned_rearranged_pq_compressed_vectors_file(std::ifstream &pq_c
 
 }
 
-int ais_create_aligned_rearranged_pq_compressed_vectors_file(const std::string &pq_compressed_vectors_path,
+int aisaq_create_aligned_rearranged_pq_compressed_vectors_file(const std::string &pq_compressed_vectors_path,
             const std::string &aligned_rearranged_pq_compressed_vectors_path,
             uint32_t page_size, uint32_t *rearrange_map, uint32_t num_points, uint32_t pq_vector_size)
 {
@@ -376,19 +376,19 @@ int ais_create_aligned_rearranged_pq_compressed_vectors_file(const std::string &
         diskann::cerr << "corrupted pq compressed vectors file " << pq_compressed_vectors_path << std::endl;
         return -1;
     }
-    int ret = ais_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
+    int ret = aisaq_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
                 aligned_rearranged_pq_compressed_vectors_path,
                 page_size, rearrange_map, num_points, pq_vector_size);
     pq_compressed_vectors_reader.close();
     return ret;
 }
 
-const char *ais_get_io_engine_string(enum ais_pq_io_engine io_engine)
+const char *aisaq_get_io_engine_string(enum aisaq_pq_io_engine io_engine)
 {
     switch (io_engine) {
-        case ais_pq_io_engine_aio:
+        case aisaq_pq_io_engine_aio:
             return "aio";
-        case ais_pq_io_engine_uring:
+        case aisaq_pq_io_engine_uring:
             return "uring";
         default:
             break;
@@ -397,29 +397,29 @@ const char *ais_get_io_engine_string(enum ais_pq_io_engine io_engine)
 }
 
 /* instatiations */
-template int ais_generate_vectors_rearrange_map<float, uint32_t>(enum ais_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+template int aisaq_generate_vectors_rearrange_map<float, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
         uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
         std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-        ais_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void *context);
-template int ais_generate_vectors_rearrange_map<int8_t, uint32_t>(enum ais_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+        aisaq_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void *context);
+template int aisaq_generate_vectors_rearrange_map<int8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
         uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
         std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-        ais_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void *context);
-template int ais_generate_vectors_rearrange_map<uint8_t, uint32_t>(enum ais_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+        aisaq_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void *context);
+template int aisaq_generate_vectors_rearrange_map<uint8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
         uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
         std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-        ais_read_nodes_nbrs_func_t<uint8_t, uint32_t> read_nodes_nbrs_func, void *context);
-template int ais_generate_vectors_rearrange_map<float, uint16_t>(enum ais_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+        aisaq_read_nodes_nbrs_func_t<uint8_t, uint32_t> read_nodes_nbrs_func, void *context);
+template int aisaq_generate_vectors_rearrange_map<float, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
         uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
         std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-        ais_read_nodes_nbrs_func_t<float, uint16_t> read_nodes_nbrs_func, void *context);
-template int ais_generate_vectors_rearrange_map<int8_t, uint16_t>(enum ais_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+        aisaq_read_nodes_nbrs_func_t<float, uint16_t> read_nodes_nbrs_func, void *context);
+template int aisaq_generate_vectors_rearrange_map<int8_t, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
         uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
         std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-        ais_read_nodes_nbrs_func_t<int8_t, uint16_t> read_nodes_nbrs_func, void *context);
-template int ais_generate_vectors_rearrange_map<uint8_t, uint16_t>(enum ais_rearrange_sorter, uint32_t *&rearranged_vectors_map,
+        aisaq_read_nodes_nbrs_func_t<int8_t, uint16_t> read_nodes_nbrs_func, void *context);
+template int aisaq_generate_vectors_rearrange_map<uint8_t, uint16_t>(enum aisaq_rearrange_sorter, uint32_t *&rearranged_vectors_map,
         uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
         std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
-        ais_read_nodes_nbrs_func_t<uint8_t, uint16_t> read_nodes_nbrs_func, void *context);
+        aisaq_read_nodes_nbrs_func_t<uint8_t, uint16_t> read_nodes_nbrs_func, void *context);
 
 }

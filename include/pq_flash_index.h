@@ -30,11 +30,11 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix,
-        const struct ais_search_config *ais_search_config = nullptr);
+        const struct aisaq_search_config *aisaq_search_config = nullptr);
 #else
     // load compressed data, and obtains the handle to the disk-resident index
     DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix,
-        const struct ais_search_config *ais_search_config = nullptr);
+        const struct aisaq_search_config *aisaq_search_config = nullptr);
 #endif
 
 #ifdef EXEC_ENV_OLS
@@ -42,22 +42,22 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
                                                    const char *index_filepath, const char *pivots_filepath,
                                                    const char *compressed_filepath,
                                                    const char *aisaq_deprecated_index_filepath,
-                                                   const struct ais_search_config *ais_search_config);
+                                                   const struct aisaq_search_config *aisaq_search_config);
 #else
     DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
                                                    const char *pivots_filepath, const char *compressed_filepath,
                                                    const char *aisaq_deprecated_index_filepath = nullptr,
-                                                   const struct ais_search_config *ais_search_config = nullptr);
+                                                   const struct aisaq_search_config *aisaq_search_config = nullptr);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
 
-    DISKANN_DLLEXPORT void ais_load_pq_cache(const std::string pq_compressed_vectors_path,
+    DISKANN_DLLEXPORT void aisaq_load_pq_cache(const std::string pq_compressed_vectors_path,
                                              uint64_t pq_cache_size_bytes, uint32_t policy);
 
-    DISKANN_DLLEXPORT uint8_t *ais_pq_cache_lookup(uint32_t id);
+    DISKANN_DLLEXPORT uint8_t *aisaq_pq_cache_lookup(uint32_t id);
 
-    DISKANN_DLLEXPORT int ais_init(const struct ais_search_config &ais_search_config, const char *index_prefix);
+    DISKANN_DLLEXPORT int aisaq_init(const struct aisaq_search_config &aisaq_search_config, const char *index_prefix);
 
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT void generate_cache_list_from_sample_queries(MemoryMappedFiles &files, std::string sample_bin,
@@ -77,33 +77,33 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const bool use_reorder_data = false, QueryStats *stats = nullptr,
-                                              const struct ais_search_config *ais_search_config = nullptr);
+                                              const struct aisaq_search_config *aisaq_search_config = nullptr);
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const bool use_filter, const LabelT &filter_label,
                                               const bool use_reorder_data = false, QueryStats *stats = nullptr,
-                                              const struct ais_search_config *ais_search_config = nullptr);
+                                              const struct aisaq_search_config *aisaq_search_config = nullptr);
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const uint32_t io_limit, const bool use_reorder_data = false,
                                               QueryStats *stats = nullptr,
-                                              const struct ais_search_config *ais_search_config = nullptr);
+                                              const struct aisaq_search_config *aisaq_search_config = nullptr);
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const bool use_filter, const LabelT &filter_label,
                                               const uint32_t io_limit, const bool use_reorder_data = false,
                                               QueryStats *stats = nullptr,
-                                              const struct ais_search_config *ais_search_config = nullptr);
+                                              const struct aisaq_search_config *aisaq_search_config = nullptr);
 
-    DISKANN_DLLEXPORT void ais_cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
+    DISKANN_DLLEXPORT void aisaq_cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                                   uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                                   const bool use_filter, const LabelT &filter_label,
                                                   const uint32_t io_limit, const bool use_reorder_data = false,
                                                   QueryStats *stats = nullptr,
-                                                  const struct ais_search_config *ais_search_config = nullptr);
+                                                  const struct aisaq_search_config *aisaq_search_config = nullptr);
 
     DISKANN_DLLEXPORT LabelT get_converted_label(const std::string &filter_label);
 
@@ -128,7 +128,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT std::vector<bool> read_nodes(const std::vector<uint32_t> &node_ids,
                                                    std::vector<T *> &coord_buffers,
                                                    std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers,
-                                                   std::vector<uint8_t *> *ais_buffers = nullptr);
+                                                   std::vector<uint8_t *> *aisaq_buffers = nullptr);
 
     DISKANN_DLLEXPORT std::vector<std::uint8_t> get_pq_vector(std::uint64_t vid);
     DISKANN_DLLEXPORT uint64_t get_num_points();
@@ -165,7 +165,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // returns region of `node_buf` containing [COORD(T)]
     DISKANN_DLLEXPORT T *offset_to_node_coords(char *node_buf);
 
-    DISKANN_DLLEXPORT char *ais_offset_to_node_ais_data(char *node_buf);
+    DISKANN_DLLEXPORT char *aisaq_offset_to_node_aisaq_data(char *node_buf);
 
     // index info for multi-node sectors
     // nhood of node `i` is in sector: [i / nnodes_per_sector]
@@ -244,15 +244,15 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     T *_coord_cache_buf = nullptr;
     tsl::robin_map<uint32_t, T *> _coord_cache;
 
-    uint8_t *_ais_node_cache_buf = nullptr;
-    tsl::robin_map<uint32_t, uint8_t *> _ais_node_cache;
-    class aisPQReader *_ais_pq_vectors_reader = nullptr;
-    uint8_t *_ais_pq_vectors_cache_buf = nullptr;
-    tsl::robin_map<uint32_t, uint8_t *> _ais_pq_vectors_cache_map;
-    uint64_t _ais_pq_vectors_cache_count = 0;
-    bool _ais_pq_vectors_cache_direct = true;
-    bool _ais_rearranged_vectors = false;
-    uint32_t _ais_inline_pq_vectors = 0;
+    uint8_t *_aisaq_node_cache_buf = nullptr;
+    tsl::robin_map<uint32_t, uint8_t *> _aisaq_node_cache;
+    class aisaqPQReader *_aisaq_pq_vectors_reader = nullptr;
+    uint8_t *_aisaq_pq_vectors_cache_buf = nullptr;
+    tsl::robin_map<uint32_t, uint8_t *> _aisaq_pq_vectors_cache_map;
+    uint64_t _aisaq_pq_vectors_cache_count = 0;
+    bool _aisaq_pq_vectors_cache_direct = true;
+    bool _aisaq_rearranged_vectors = false;
+    uint32_t _aisaq_inline_pq_vectors = 0;
 
     // thread-specific scratch
     ConcurrentQueue<SSDThreadData<T> *> _thread_data;

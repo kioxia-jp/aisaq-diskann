@@ -4,35 +4,35 @@
 
 #include <stdint.h>
 #include <string>
-#include "ais.h"
+#include "aisaq.h"
 
 namespace diskann {
 
-class aisPQReaderContext;
+class aisaqPQReaderContext;
 
-class aisPQReader {
+class aisaqPQReader {
 public:
-    static aisPQReader *create_reader(enum ais_pq_io_engine io_engine, const char *pq_file_path, bool rearranged);
-    virtual ~aisPQReader();
+    static aisaqPQReader *create_reader(enum aisaq_pq_io_engine io_engine, const char *pq_file_path, bool rearranged);
+    virtual ~aisaqPQReader();
 	virtual const char *get_io_engine_name() = 0;
     virtual int init(const char *pq_file_path, bool rearranged) = 0;
     virtual void cleanup() = 0;
-    virtual aisPQReaderContext *create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes) = 0;
-    virtual void destroy_context(aisPQReaderContext &ctx) = 0;
-    virtual int read_pq_vectors_submit(aisPQReaderContext &ctx, const uint32_t *ids, const uint32_t n_ids, uint32_t &io_count) = 0;
-    virtual int read_pq_vectors_wait_completion(aisPQReaderContext &ctx, uint32_t *read_vec, uint8_t **pq_vectors, uint32_t nr_events,
+    virtual aisaqPQReaderContext *create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes) = 0;
+    virtual void destroy_context(aisaqPQReaderContext &ctx) = 0;
+    virtual int read_pq_vectors_submit(aisaqPQReaderContext &ctx, const uint32_t *ids, const uint32_t n_ids, uint32_t &io_count) = 0;
+    virtual int read_pq_vectors_wait_completion(aisaqPQReaderContext &ctx, uint32_t *read_vec, uint8_t **pq_vectors, uint32_t nr_events,
                                         uint32_t max_events, uint32_t &rcount) = 0;
-    virtual void read_pq_vectors_done(aisPQReaderContext &ctx) = 0;
-    void clear_page_cache(aisPQReaderContext &ctx);
+    virtual void read_pq_vectors_done(aisaqPQReaderContext &ctx) = 0;
+    void clear_page_cache(aisaqPQReaderContext &ctx);
 protected:
-    aisPQReader();
+    aisaqPQReader();
     int init_common(const char *pq_file_path, bool rearranged);
     void uninit_common();
     /* helpers */
 	void calc_pq_vector_offset_bytes(uint32_t id, uint64_t &offset_from_header, uint32_t &header_size);
 	void calc_pq_vector_read_params(uint32_t id, uint64_t &from_sector, uint64_t &to_sector, uint32_t &buff_offset);
-	uint8_t *get_free_data_buffer(aisPQReaderContext &ctx);
-	void add_pending_io_completion_event(aisPQReaderContext &ctx, uint32_t completed_index);
+	uint8_t *get_free_data_buffer(aisaqPQReaderContext &ctx);
+	void add_pending_io_completion_event(aisaqPQReaderContext &ctx, uint32_t completed_index);
 
   	std::string m_pq_file_path;
     bool m_rearranged;

@@ -9,7 +9,7 @@
 
 #include "logger.h"
 #include "disk_utils.h"
-#include "ais_utils.h"
+#include "aisaq_utils.h"
 #include "cached_io.h"
 #include "index.h"
 #include "mkl.h"
@@ -993,11 +993,11 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
             }
         } else {
             /* calculate the number of compressed vectors that can be appended to the node without increasing the index file size */
-            uint32_t _n_inline = ais_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
+            uint32_t _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
             if (rearrange && _n_inline < width_u32) {
                 /* calc with rearrange */
                 max_node_len+= sizeof(uint32_t);
-                _n_inline = ais_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
+                _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
             }
             inline_pq_vectors = _n_inline;
         }
@@ -1067,7 +1067,7 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
         }
         std::unordered_map<uint32_t, std::vector<uint32_t>> filter_to_medoid_ids;
         struct vamana_read_context context(vamana_reader, vamana_reader_node_to_pos_map);
-        if (ais_generate_vectors_rearrange_map<T, uint32_t>(ais_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
+        if (aisaq_generate_vectors_rearrange_map<T, uint32_t>(aisaq_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
             pq_compressed_nbytes , width_u32, &medoid_u32, 1, filter_to_medoid_ids,
             read_node_nbrs_from_vamana<T, uint32_t>, &context) != 0) {
             throw ANNException("failed to generate rearranged vectors data"
@@ -1076,7 +1076,7 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
         /* restore last position */
         vamana_reader.seekg(pos, vamana_reader.beg);
         /* create reversed vectors map */
-        if (ais_create_reversed_vectors_map(reversed_rearranged_vectors_map, rearranged_vectors_map, (uint32_t)npts_64) != 0) {
+        if (aisaq_create_reversed_vectors_map(reversed_rearranged_vectors_map, rearranged_vectors_map, (uint32_t)npts_64) != 0) {
             throw ANNException("failed to generate reversed rearranged vectors map"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);
         }
@@ -1111,8 +1111,8 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
 
         /* create aligned pq compressed rearranged file */
         std::string rearranged_pq_compressed_vectors_path = index_prefix_path + "_pq_compressed_rearranged.bin";
-        if (ais_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
-            rearranged_pq_compressed_vectors_path, AIS_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT,
+        if (aisaq_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
+            rearranged_pq_compressed_vectors_path, AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT,
             nullptr /*reversed_rearranged_vectors_map*/, npts_64, pq_compressed_nbytes) != 0) {
             throw ANNException("failed to create aligned rearranged pq vectors file"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);

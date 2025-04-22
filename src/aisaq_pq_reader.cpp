@@ -21,7 +21,7 @@
 
 #include "defaults.h"
 #include "utils.h"
-#include "ais_pq_reader.h"
+#include "aisaq_pq_reader.h"
 
 #define SECTOR_SIZE 512
 
@@ -29,20 +29,20 @@ namespace diskann
 {
 
 /* reader context */
-class aisPQReaderContext {
+class aisaqPQReaderContext {
 public:
-    virtual ~aisPQReaderContext();
+    virtual ~aisaqPQReaderContext();
     virtual int init(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_num_sectors,
                      uint64_t pq_read_page_cache_size_bytes, uint32_t pq_page_size) = 0;
     virtual void cleanup() = 0;
 protected:
-    aisPQReaderContext();
+    aisaqPQReaderContext();
     int init_common(const char *pq_file_path, int oflags, uint32_t max_ios, uint32_t max_io_num_sectors,
                     uint64_t pq_read_page_cache_size_bytes, uint32_t pq_page_size);
     void cleanup_common();
-    friend class aisPQReader;
-    friend class aisPQReader_aio;
-    friend class aisPQReader_uring;
+    friend class aisaqPQReader;
+    friend class aisaqPQReader_aio;
+    friend class aisaqPQReader_uring;
     struct page_cache_node {
         page_cache_node(uint64_t page_id, uint8_t *buff)
             : m_page_id(page_id), m_buff(buff) {
@@ -62,18 +62,18 @@ protected:
     std::list<page_cache_node> m_cached_data_buffers_lru_list;
 };
 
-aisPQReaderContext::aisPQReaderContext()
+aisaqPQReaderContext::aisaqPQReaderContext()
 	: m_fd(-1), m_pending_io_count(0)
     , m_pending_io_completion_events(nullptr), m_pending_io_completion_events_count(0)
     , m_pq_read_page_cache_size_bytes(0)
 {
 }
 
-aisPQReaderContext::~aisPQReaderContext()
+aisaqPQReaderContext::~aisaqPQReaderContext()
 {
 }
 
-int aisPQReaderContext::init_common(const char *pq_file_path, int oflags, uint32_t max_ios
+int aisaqPQReaderContext::init_common(const char *pq_file_path, int oflags, uint32_t max_ios
 	, uint32_t max_io_num_sectors, uint64_t pq_read_page_cache_size_bytes, uint32_t pq_page_size)
 {
     oflags|= O_RDONLY | O_LARGEFILE;
@@ -107,7 +107,7 @@ int aisPQReaderContext::init_common(const char *pq_file_path, int oflags, uint32
 	return 0;
 }
 
-void aisPQReaderContext::cleanup_common()
+void aisaqPQReaderContext::cleanup_common()
 {
     while (!m_free_data_buffers.empty()) {
         std::free(m_free_data_buffers.back());
@@ -123,15 +123,15 @@ void aisPQReaderContext::cleanup_common()
     }
 }
 
-class aisPQReaderContext_aio : public aisPQReaderContext {
+class aisaqPQReaderContext_aio : public aisaqPQReaderContext {
 public:
-    aisPQReaderContext_aio();
+    aisaqPQReaderContext_aio();
 protected:
-    virtual ~aisPQReaderContext_aio();
+    virtual ~aisaqPQReaderContext_aio();
     virtual int init(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_num_sectors,
                      uint64_t pq_read_page_cache_size_bytes, uint32_t pq_page_size);
     virtual void cleanup();
-    friend class aisPQReader_aio;
+    friend class aisaqPQReader_aio;
     struct io_data {
         struct iocb iocb;
         bool root_io;
@@ -151,16 +151,16 @@ private:
     struct iocb **m_iocbs_ptr;
 };
 
-aisPQReaderContext_aio::aisPQReaderContext_aio()
+aisaqPQReaderContext_aio::aisaqPQReaderContext_aio()
 	: m_aio_ctx(nullptr), m_io_data(nullptr), m_io_data_count(0), m_iocbs_ptr(nullptr)
 {
 }
 
-aisPQReaderContext_aio::~aisPQReaderContext_aio()
+aisaqPQReaderContext_aio::~aisaqPQReaderContext_aio()
 {
 }
 
-int aisPQReaderContext_aio::init(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_num_sectors,
+int aisaqPQReaderContext_aio::init(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_num_sectors,
                                  uint64_t pq_read_page_cache_size_bytes, uint32_t pq_page_size)
 {
 	if (init_common(pq_file_path, O_RDONLY | O_LARGEFILE | O_NONBLOCK | O_DIRECT,
@@ -172,7 +172,7 @@ int aisPQReaderContext_aio::init(const char *pq_file_path, uint32_t max_ios, uin
         std::cerr << "failed to setup aio context" << std::endl;
         return -1;
     }
-    m_io_data = new struct aisPQReaderContext_aio::io_data[max_ios];
+    m_io_data = new struct aisaqPQReaderContext_aio::io_data[max_ios];
     if (m_io_data == nullptr) {
 		cleanup();
         return -1;
@@ -185,7 +185,7 @@ int aisPQReaderContext_aio::init(const char *pq_file_path, uint32_t max_ios, uin
     return 0;
 }
 
-void aisPQReaderContext_aio::cleanup()
+void aisaqPQReaderContext_aio::cleanup()
 {
 	if (m_iocbs_ptr != nullptr) {
 		delete [] m_iocbs_ptr;
@@ -202,15 +202,15 @@ void aisPQReaderContext_aio::cleanup()
     cleanup_common();
 }
 
-class aisPQReaderContext_uring : public aisPQReaderContext {
+class aisaqPQReaderContext_uring : public aisaqPQReaderContext {
 public:
-    aisPQReaderContext_uring();
+    aisaqPQReaderContext_uring();
 protected:
-    virtual ~aisPQReaderContext_uring();
+    virtual ~aisaqPQReaderContext_uring();
     virtual int init(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_num_sectors,
                      uint64_t pq_read_page_cache_size_bytes, uint32_t pq_page_size);
     virtual void cleanup();
-    friend class aisPQReader_uring;
+    friend class aisaqPQReader_uring;
     struct io_data {
         bool root_io;
         bool in_page_cache;
@@ -229,16 +229,16 @@ private:
     uint32_t m_io_data_count;
 };
 
-aisPQReaderContext_uring::aisPQReaderContext_uring()
+aisaqPQReaderContext_uring::aisaqPQReaderContext_uring()
 	: m_io_uring_ctx_initialized(false), m_io_data(nullptr), m_io_data_count(0)
 {
 }
 
-aisPQReaderContext_uring::~aisPQReaderContext_uring()
+aisaqPQReaderContext_uring::~aisaqPQReaderContext_uring()
 {
 }
 
-int aisPQReaderContext_uring::init(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_num_sectors,
+int aisaqPQReaderContext_uring::init(const char *pq_file_path, uint32_t max_ios, uint32_t max_io_num_sectors,
                                  uint64_t pq_read_page_cache_size_bytes, uint32_t pq_page_size)
 {
 	if (init_common(pq_file_path, O_RDONLY | O_LARGEFILE | O_DIRECT,
@@ -251,14 +251,14 @@ int aisPQReaderContext_uring::init(const char *pq_file_path, uint32_t max_ios, u
         return -1;
     }
     m_io_uring_ctx_initialized = true;
-    m_io_data = new struct aisPQReaderContext_uring::io_data[max_ios];
+    m_io_data = new struct aisaqPQReaderContext_uring::io_data[max_ios];
     if (m_io_data == nullptr) {
         return -1;
     }
     return 0;
 }
 
-void aisPQReaderContext_uring::cleanup()
+void aisaqPQReaderContext_uring::cleanup()
 {
     if (m_io_data != nullptr) {
         delete [] m_io_data;
@@ -274,38 +274,38 @@ void aisPQReaderContext_uring::cleanup()
 /**************************************/
 
 /* readers */
-class aisPQReader_aio : public aisPQReader {
+class aisaqPQReader_aio : public aisaqPQReader {
 public:
-    aisPQReader_aio();
+    aisaqPQReader_aio();
 protected:
-    virtual ~aisPQReader_aio();
+    virtual ~aisaqPQReader_aio();
     virtual const char *get_io_engine_name();
     virtual int init(const char *pq_file_path, bool rearranged);
     virtual void cleanup();
-    virtual aisPQReaderContext *create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes);
-    virtual void destroy_context(aisPQReaderContext &ctx);
-    virtual int read_pq_vectors_submit(aisPQReaderContext &ctx,
+    virtual aisaqPQReaderContext *create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes);
+    virtual void destroy_context(aisaqPQReaderContext &ctx);
+    virtual int read_pq_vectors_submit(aisaqPQReaderContext &ctx,
 						const uint32_t *ids, const uint32_t n_ids, uint32_t &io_count);
-    virtual int read_pq_vectors_wait_completion(aisPQReaderContext &ctx, uint32_t *read_vec,
+    virtual int read_pq_vectors_wait_completion(aisaqPQReaderContext &ctx, uint32_t *read_vec,
                         uint8_t **pq_vectors, uint32_t nr_events, uint32_t max_events, uint32_t &rcount);
-    virtual void read_pq_vectors_done(aisPQReaderContext &ctx);
+    virtual void read_pq_vectors_done(aisaqPQReaderContext &ctx);
 private:
 };
 
-aisPQReader_aio::aisPQReader_aio()
+aisaqPQReader_aio::aisaqPQReader_aio()
 {
 }
 
-aisPQReader_aio::~aisPQReader_aio()
+aisaqPQReader_aio::~aisaqPQReader_aio()
 {
 }
 
-const char *aisPQReader_aio::get_io_engine_name()
+const char *aisaqPQReader_aio::get_io_engine_name()
 {
 	return "aio";
 }
 
-int aisPQReader_aio::init(const char *pq_file_path, bool rearranged)
+int aisaqPQReader_aio::init(const char *pq_file_path, bool rearranged)
 {
     int rc = init_common(pq_file_path, rearranged);
     if (rc != 0) {
@@ -315,19 +315,19 @@ int aisPQReader_aio::init(const char *pq_file_path, bool rearranged)
     return 0;
 }
 
-void aisPQReader_aio::cleanup()
+void aisaqPQReader_aio::cleanup()
 {
     uninit_common();
 }
 
-aisPQReaderContext *aisPQReader_aio::create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes)
+aisaqPQReaderContext *aisaqPQReader_aio::create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes)
 {
     if (pq_read_page_cache_size_bytes > 0 && !m_rearranged) {
     	diskann::cout << "pq read page cache may only be used with rearranged index,"
                          " disabling pq read page cache" << std::endl;
         pq_read_page_cache_size_bytes = 0;
     }
-    aisPQReaderContext *ctx = new aisPQReaderContext_aio();
+    aisaqPQReaderContext *ctx = new aisaqPQReaderContext_aio();
     if (ctx != nullptr) {
         if (ctx->init(m_pq_file_path.c_str(), max_ios, m_max_io_size_sectors,
                      pq_read_page_cache_size_bytes, m_rearranged_pq_page_size) != 0) {
@@ -338,23 +338,23 @@ aisPQReaderContext *aisPQReader_aio::create_context(uint32_t max_ios, uint64_t p
     return ctx;
 }
 
-void aisPQReader_aio::destroy_context(aisPQReaderContext &ctx)
+void aisaqPQReader_aio::destroy_context(aisaqPQReaderContext &ctx)
 {
     ctx.cleanup();
     delete &ctx;
 }
 
-int aisPQReader_aio::read_pq_vectors_submit(aisPQReaderContext &ctx,
+int aisaqPQReader_aio::read_pq_vectors_submit(aisaqPQReaderContext &ctx,
 		const uint32_t *ids, const uint32_t n_ids, uint32_t &io_count)
 {
-    aisPQReaderContext_aio &aio_ctx = reinterpret_cast<aisPQReaderContext_aio &>(ctx);
+    aisaqPQReaderContext_aio &aio_ctx = reinterpret_cast<aisaqPQReaderContext_aio &>(ctx);
     if (n_ids > aio_ctx.m_max_ios) {
         std::cerr << "id list size is greater than max allowed: " << ctx.m_max_ios << " < " << n_ids << std::endl;
         return -1;
     }
     std::map<uint64_t, uint32_t> sectors_map; /* start sector -> index map */
     uint32_t read_sector_count;
-    struct aisPQReaderContext_aio::io_data *io_data;
+    struct aisaqPQReaderContext_aio::io_data *io_data;
     assert(aio_ctx.m_pending_io_count == 0);
     aio_ctx.m_pending_io_completion_events_count = 0;
     if (ctx.m_pq_read_page_cache_size_bytes > 0) {
@@ -371,7 +371,7 @@ int aisPQReader_aio::read_pq_vectors_submit(aisPQReaderContext &ctx,
             auto iter = aio_ctx.m_cached_data_buffers.find(page_id);
             if ((io_data->in_page_cache = (iter != aio_ctx.m_cached_data_buffers.end()))) {
                 /* in cache */
-                struct aisPQReaderContext::page_cache_node &cache_node = *iter->second;
+                struct aisaqPQReaderContext::page_cache_node &cache_node = *iter->second;
                 /* move to lru back, this also ensures it will not be removed during this read sequence */
                 aio_ctx.m_cached_data_buffers_lru_list.splice(aio_ctx.m_cached_data_buffers_lru_list.end(),
                                                               aio_ctx.m_cached_data_buffers_lru_list,
@@ -437,11 +437,11 @@ int aisPQReader_aio::read_pq_vectors_submit(aisPQReaderContext &ctx,
     return 0;
 }
 
-int aisPQReader_aio::read_pq_vectors_wait_completion(aisPQReaderContext &ctx,
+int aisaqPQReader_aio::read_pq_vectors_wait_completion(aisaqPQReaderContext &ctx,
 		uint32_t *read_vec, uint8_t **pq_vectors, uint32_t nr_events, uint32_t max_events, uint32_t &rcount)
 {
-    aisPQReaderContext_aio &aio_ctx = reinterpret_cast<aisPQReaderContext_aio &>(ctx);
-    struct aisPQReaderContext_aio::io_data *io_data;
+    aisaqPQReaderContext_aio &aio_ctx = reinterpret_cast<aisaqPQReaderContext_aio &>(ctx);
+    struct aisaqPQReaderContext_aio::io_data *io_data;
     rcount = 0;
     while (aio_ctx.m_pending_io_completion_events_count > 0 && rcount < max_events) {
         aio_ctx.m_pending_io_completion_events_count--;
@@ -469,7 +469,7 @@ int aisPQReader_aio::read_pq_vectors_wait_completion(aisPQReaderContext &ctx,
             return -1;
         }
         for (uint32_t i = 0; i < ret; i++) {
-            io_data = (struct aisPQReaderContext_aio::io_data *) (evts[i].data);
+            io_data = (struct aisaqPQReaderContext_aio::io_data *) (evts[i].data);
             do {
                 if (rcount < max_events) {
                     read_vec[rcount] = io_data->vector_index;
@@ -489,10 +489,10 @@ int aisPQReader_aio::read_pq_vectors_wait_completion(aisPQReaderContext &ctx,
     return 0;
 }
 
-void aisPQReader_aio::read_pq_vectors_done(aisPQReaderContext &ctx)
+void aisaqPQReader_aio::read_pq_vectors_done(aisaqPQReaderContext &ctx)
 {
-    aisPQReaderContext_aio &aio_ctx = reinterpret_cast<aisPQReaderContext_aio &>(ctx);
-    struct aisPQReaderContext_aio::io_data *io_data;
+    aisaqPQReaderContext_aio &aio_ctx = reinterpret_cast<aisaqPQReaderContext_aio &>(ctx);
+    struct aisaqPQReaderContext_aio::io_data *io_data;
     assert(aio_ctx.m_pending_io_count == 0);
     for (uint32_t i = 0; i < aio_ctx.m_io_data_count; i++) {
         io_data = aio_ctx.m_io_data + i;
@@ -501,7 +501,7 @@ void aisPQReader_aio::read_pq_vectors_done(aisPQReaderContext &ctx)
             if (aio_ctx.m_pq_read_page_cache_size_bytes > 0) {
                 uint64_t page_id = io_data->from_sector / m_rearranged_pq_sectors_per_page;
                 //assert(aio_ctx.m_cached_data_buffers.find(page_id) == aio_ctx.m_cached_data_buffers.end());
-                struct aisPQReaderContext::page_cache_node &cache_node =
+                struct aisaqPQReaderContext::page_cache_node &cache_node =
                                 aio_ctx.m_cached_data_buffers_lru_list.emplace_back(page_id, buff);
                 cache_node.self = std::prev(aio_ctx.m_cached_data_buffers_lru_list.end());
                 /* add to cache */
@@ -517,38 +517,38 @@ void aisPQReader_aio::read_pq_vectors_done(aisPQReaderContext &ctx)
 
 /**************************************/
 
-class aisPQReader_uring : public aisPQReader {
+class aisaqPQReader_uring : public aisaqPQReader {
 public:
-    aisPQReader_uring();
+    aisaqPQReader_uring();
 protected:
-    virtual ~aisPQReader_uring();
+    virtual ~aisaqPQReader_uring();
 	virtual const char *get_io_engine_name();
     virtual int init(const char *pq_file_path, bool rearranged);
     virtual void cleanup();
-    virtual aisPQReaderContext *create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes);
-    virtual void destroy_context(aisPQReaderContext &ctx);
-    virtual int read_pq_vectors_submit(aisPQReaderContext &ctx, const uint32_t *ids,
+    virtual aisaqPQReaderContext *create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes);
+    virtual void destroy_context(aisaqPQReaderContext &ctx);
+    virtual int read_pq_vectors_submit(aisaqPQReaderContext &ctx, const uint32_t *ids,
                         const uint32_t n_ids, uint32_t &io_count);
-    virtual int read_pq_vectors_wait_completion(aisPQReaderContext &ctx, uint32_t *read_vec,
+    virtual int read_pq_vectors_wait_completion(aisaqPQReaderContext &ctx, uint32_t *read_vec,
                         uint8_t **pq_vectors, uint32_t nr_events, uint32_t max_events, uint32_t &rcount);
-    virtual void read_pq_vectors_done(aisPQReaderContext &ctx);
+    virtual void read_pq_vectors_done(aisaqPQReaderContext &ctx);
 private:
 };
 
-aisPQReader_uring::aisPQReader_uring()
+aisaqPQReader_uring::aisaqPQReader_uring()
 {
 }
 
-aisPQReader_uring::~aisPQReader_uring()
+aisaqPQReader_uring::~aisaqPQReader_uring()
 {
 }
 
-const char *aisPQReader_uring::get_io_engine_name()
+const char *aisaqPQReader_uring::get_io_engine_name()
 {
 	return "uring";
 }
 
-int aisPQReader_uring::init(const char *pq_file_path, bool rearranged)
+int aisaqPQReader_uring::init(const char *pq_file_path, bool rearranged)
 {
     int rc = init_common(pq_file_path, rearranged);
     if (rc != 0) {
@@ -558,19 +558,19 @@ int aisPQReader_uring::init(const char *pq_file_path, bool rearranged)
     return 0;
 }
 
-void aisPQReader_uring::cleanup()
+void aisaqPQReader_uring::cleanup()
 {
     uninit_common();
 }
 
-aisPQReaderContext *aisPQReader_uring::create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes)
+aisaqPQReaderContext *aisaqPQReader_uring::create_context(uint32_t max_ios, uint64_t pq_read_page_cache_size_bytes)
 {
     if (pq_read_page_cache_size_bytes > 0 && !m_rearranged) {
     	diskann::cout << "pq read page cache may only be used with rearranged index,"
                          " disabling pq read page cache" << std::endl;
         pq_read_page_cache_size_bytes = 0;
     }
-    aisPQReaderContext *ctx = new aisPQReaderContext_uring();
+    aisaqPQReaderContext *ctx = new aisaqPQReaderContext_uring();
     if (ctx != nullptr) {
         if (ctx->init(m_pq_file_path.c_str(), max_ios, m_max_io_size_sectors,
                      pq_read_page_cache_size_bytes, m_rearranged_pq_page_size) != 0) {
@@ -581,23 +581,23 @@ aisPQReaderContext *aisPQReader_uring::create_context(uint32_t max_ios, uint64_t
     return ctx;
 }
 
-void aisPQReader_uring::destroy_context(aisPQReaderContext &ctx)
+void aisaqPQReader_uring::destroy_context(aisaqPQReaderContext &ctx)
 {
     ctx.cleanup();
     delete &ctx;
 }
 
-int aisPQReader_uring::read_pq_vectors_submit(aisPQReaderContext &ctx,
+int aisaqPQReader_uring::read_pq_vectors_submit(aisaqPQReaderContext &ctx,
 		const uint32_t *ids, const uint32_t n_ids, uint32_t &io_count)
 {
-    aisPQReaderContext_uring &uring_ctx = reinterpret_cast<aisPQReaderContext_uring &>(ctx);
+    aisaqPQReaderContext_uring &uring_ctx = reinterpret_cast<aisaqPQReaderContext_uring &>(ctx);
     if (n_ids > uring_ctx.m_max_ios) {
         std::cerr << "id list size is greater than max allowed: " << ctx.m_max_ios << " < " << n_ids << std::endl;
         return -1;
     }
     std::map<uint64_t, uint32_t> sectors_map; /* start sector -> index map */
     uint32_t read_sector_count;
-    struct aisPQReaderContext_uring::io_data *io_data;
+    struct aisaqPQReaderContext_uring::io_data *io_data;
     assert(uring_ctx.m_pending_io_count == 0);
     uring_ctx.m_pending_io_completion_events_count = 0;
     if (uring_ctx.m_pq_read_page_cache_size_bytes > 0) {
@@ -614,7 +614,7 @@ int aisPQReader_uring::read_pq_vectors_submit(aisPQReaderContext &ctx,
             auto iter = uring_ctx.m_cached_data_buffers.find(page_id);
             if ((io_data->in_page_cache = (iter != uring_ctx.m_cached_data_buffers.end()))) {
                 /* in cache */
-                struct aisPQReaderContext::page_cache_node &cache_node = *iter->second;
+                struct aisaqPQReaderContext::page_cache_node &cache_node = *iter->second;
                 /* move to lru back, this also ensures it will not be removed during this read sequence */
                 uring_ctx.m_cached_data_buffers_lru_list.splice(uring_ctx.m_cached_data_buffers_lru_list.end(), uring_ctx.m_cached_data_buffers_lru_list, cache_node.self);
                 io_data->hooked = -1;
@@ -679,11 +679,11 @@ int aisPQReader_uring::read_pq_vectors_submit(aisPQReaderContext &ctx,
 
 }
 
-int aisPQReader_uring::read_pq_vectors_wait_completion(aisPQReaderContext &ctx,
+int aisaqPQReader_uring::read_pq_vectors_wait_completion(aisaqPQReaderContext &ctx,
 		uint32_t *read_vec, uint8_t **pq_vectors, uint32_t nr_events, uint32_t max_events, uint32_t &rcount)
 {
-    aisPQReaderContext_uring &uring_ctx = reinterpret_cast<aisPQReaderContext_uring &>(ctx);
-    struct aisPQReaderContext_uring::io_data *io_data;
+    aisaqPQReaderContext_uring &uring_ctx = reinterpret_cast<aisaqPQReaderContext_uring &>(ctx);
+    struct aisaqPQReaderContext_uring::io_data *io_data;
     rcount = 0;
     while (uring_ctx.m_pending_io_completion_events_count > 0 && rcount < max_events) {
         uring_ctx.m_pending_io_completion_events_count--;
@@ -703,7 +703,7 @@ int aisPQReader_uring::read_pq_vectors_wait_completion(aisPQReaderContext &ctx,
                       << ", ernno=" << errno << "=" << ::strerror(-ret) << std::endl;
             exit(-1);
         }
-        io_data = (struct aisPQReaderContext_uring::io_data *)io_uring_cqe_get_data(cqe);
+        io_data = (struct aisaqPQReaderContext_uring::io_data *)io_uring_cqe_get_data(cqe);
         if (cqe->res <= 0) {
             std::cerr << "io_uring read io returned with error (cqe->res=" << cqe->res << ")" << std::endl;
             exit(-1);
@@ -728,10 +728,10 @@ int aisPQReader_uring::read_pq_vectors_wait_completion(aisPQReaderContext &ctx,
 
 }
 
-void aisPQReader_uring::read_pq_vectors_done(aisPQReaderContext &ctx)
+void aisaqPQReader_uring::read_pq_vectors_done(aisaqPQReaderContext &ctx)
 {
-    aisPQReaderContext_uring &uring_ctx = reinterpret_cast<aisPQReaderContext_uring &>(ctx);
-    struct aisPQReaderContext_uring::io_data *io_data;
+    aisaqPQReaderContext_uring &uring_ctx = reinterpret_cast<aisaqPQReaderContext_uring &>(ctx);
+    struct aisaqPQReaderContext_uring::io_data *io_data;
     assert(uring_ctx.m_pending_io_count == 0);
     for (uint32_t i = 0; i < uring_ctx.m_io_data_count; i++) {
         io_data = uring_ctx.m_io_data + i;
@@ -740,7 +740,7 @@ void aisPQReader_uring::read_pq_vectors_done(aisPQReaderContext &ctx)
             if (uring_ctx.m_pq_read_page_cache_size_bytes > 0) {
                 uint64_t page_id = io_data->from_sector / m_rearranged_pq_sectors_per_page;
                 //assert(uring_ctx.m_cached_data_buffers.find(page_id) == uring_ctx.m_cached_data_buffers.end());
-                struct aisPQReaderContext::page_cache_node &cache_node =
+                struct aisaqPQReaderContext::page_cache_node &cache_node =
                             uring_ctx.m_cached_data_buffers_lru_list.emplace_back(page_id, buff);
                 cache_node.self = std::prev(uring_ctx.m_cached_data_buffers_lru_list.end());
                 /* add to cache */
@@ -755,15 +755,15 @@ void aisPQReader_uring::read_pq_vectors_done(aisPQReaderContext &ctx)
 
 /**************************************/
 
-aisPQReader::aisPQReader()
+aisaqPQReader::aisaqPQReader()
 {
 }
 
-aisPQReader::~aisPQReader()
+aisaqPQReader::~aisaqPQReader()
 {
 }
 
-int aisPQReader::init_common(const char *pq_file_path, bool rearranged)
+int aisaqPQReader::init_common(const char *pq_file_path, bool rearranged)
 {
     /* init m_block_size */
     struct stat file_stat;
@@ -790,7 +790,7 @@ int aisPQReader::init_common(const char *pq_file_path, bool rearranged)
     }
     size_t res;
 	if (rearranged) {
-    	struct ais_rearranged_pq_compressed_vectors_file_header file_header;
+    	struct aisaq_rearranged_pq_compressed_vectors_file_header file_header;
     	res = read(fd, &file_header, sizeof(file_header));
         assert(res == sizeof(file_header));
     	m_num_vectors = file_header.num_vectors;
@@ -837,38 +837,38 @@ int aisPQReader::init_common(const char *pq_file_path, bool rearranged)
 }
 
 /* static public */
-aisPQReader *aisPQReader::create_reader(enum ais_pq_io_engine io_engine,
+aisaqPQReader *aisaqPQReader::create_reader(enum aisaq_pq_io_engine io_engine,
 	const char *pq_file_path, bool rearranged)
 {
-    aisPQReader *ais_r;
+    aisaqPQReader *aisaq_reader;
     switch (io_engine) {
-        case ais_pq_io_engine_aio:
-            ais_r = new aisPQReader_aio();
+        case aisaq_pq_io_engine_aio:
+            aisaq_reader = new aisaqPQReader_aio();
             break;
-        case ais_pq_io_engine_uring:
-            ais_r = new aisPQReader_uring();
+        case aisaq_pq_io_engine_uring:
+            aisaq_reader = new aisaqPQReader_uring();
             break;
         default:
             return nullptr;
     }
-    if (ais_r != nullptr) {
-        if (ais_r->init(pq_file_path, rearranged) != 0) {
-            delete ais_r;
-            ais_r = nullptr;
+    if (aisaq_reader != nullptr) {
+        if (aisaq_reader->init(pq_file_path, rearranged) != 0) {
+            delete aisaq_reader;
+            aisaq_reader = nullptr;
         }
     }
-    return ais_r;
+    return aisaq_reader;
 }
 
-void aisPQReader::uninit_common()
+void aisaqPQReader::uninit_common()
 {
 }
 
 /* public */
-void aisPQReader::clear_page_cache(aisPQReaderContext &ctx)
+void aisaqPQReader::clear_page_cache(aisaqPQReaderContext &ctx)
 {
     while (!ctx.m_cached_data_buffers_lru_list.empty()) {
-        struct aisPQReaderContext::page_cache_node &cache_node = ctx.m_cached_data_buffers_lru_list.back();
+        struct aisaqPQReaderContext::page_cache_node &cache_node = ctx.m_cached_data_buffers_lru_list.back();
         ctx.m_free_data_buffers.push_back(cache_node.m_buff);
         ctx.m_cached_data_buffers_lru_list.pop_back();
     }
@@ -877,7 +877,7 @@ void aisPQReader::clear_page_cache(aisPQReaderContext &ctx)
 
 /* helpers */
 
-void aisPQReader::calc_pq_vector_offset_bytes(uint32_t id, uint64_t &offset_from_header, uint32_t &header_size)
+void aisaqPQReader::calc_pq_vector_offset_bytes(uint32_t id, uint64_t &offset_from_header, uint32_t &header_size)
 {
     if (m_rearranged) {
         header_size = diskann::defaults::SECTOR_LEN;
@@ -889,7 +889,7 @@ void aisPQReader::calc_pq_vector_offset_bytes(uint32_t id, uint64_t &offset_from
     offset_from_header = (uint64_t)id * m_pq_vector_size;
 }
 
-void aisPQReader::calc_pq_vector_read_params(uint32_t id, uint64_t &from_sector, uint64_t &to_sector, uint32_t &buff_offset)
+void aisaqPQReader::calc_pq_vector_read_params(uint32_t id, uint64_t &from_sector, uint64_t &to_sector, uint32_t &buff_offset)
 {
     uint64_t vector_offset_from_header;
     uint32_t header_size;
@@ -909,7 +909,7 @@ void aisPQReader::calc_pq_vector_read_params(uint32_t id, uint64_t &from_sector,
     }
 }
 
-uint8_t *aisPQReader::get_free_data_buffer(aisPQReaderContext &ctx)
+uint8_t *aisaqPQReader::get_free_data_buffer(aisaqPQReaderContext &ctx)
 {
     if (!ctx.m_free_data_buffers.empty()) {
         /* pop from free */
@@ -919,7 +919,7 @@ uint8_t *aisPQReader::get_free_data_buffer(aisPQReaderContext &ctx)
     }
     if (ctx.m_pq_read_page_cache_size_bytes > 0 && !ctx.m_cached_data_buffers_lru_list.empty()) {
         /* pop from cache */
-        struct aisPQReaderContext::page_cache_node &cache_node = ctx.m_cached_data_buffers_lru_list.front();
+        struct aisaqPQReaderContext::page_cache_node &cache_node = ctx.m_cached_data_buffers_lru_list.front();
         ctx.m_cached_data_buffers.erase(cache_node.m_page_id);
         ctx.m_cached_data_buffers_lru_list.pop_front();
         return cache_node.m_buff;
@@ -927,7 +927,7 @@ uint8_t *aisPQReader::get_free_data_buffer(aisPQReaderContext &ctx)
     return nullptr;
 }
 
-void aisPQReader::add_pending_io_completion_event(aisPQReaderContext &ctx, uint32_t completed_index)
+void aisaqPQReader::add_pending_io_completion_event(aisaqPQReaderContext &ctx, uint32_t completed_index)
 {
     ctx.m_pending_io_completion_events[ctx.m_pending_io_completion_events_count] = completed_index;
     ctx.m_pending_io_completion_events_count++;
