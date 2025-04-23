@@ -2,6 +2,8 @@ name: DiskANN Build PDoc Documentation
 on: [workflow_call]
 jobs:
   build-reference-documentation:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -41,13 +43,14 @@ jobs:
           EOF
           )" >> $GITHUB_ENV
       - name: Archive documentation version artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: dependencies
           path: |
-            dependencies_documentation.txt
+            ${{ github.run_id }}-dependencies_documentation.txt
+            overwrite: true
       - name: Archive documentation artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: documentation-site
           path: |
@@ -60,18 +63,18 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: docs/python/html
           destination_dir: docs/python/dev
-      # Publish to /<version> if we are on the "main" branch and releasing
+      # Publish to /<version> if we are releasing
       - name: Publish reference docs by version (main branch)
         uses: peaceiris/actions-gh-pages@v3
-        if: github.event_name == 'release' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'release'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: docs/python/html
           destination_dir: docs/python/${{ env.DISKANN_VERSION }}
-      # Publish to /latest if we are on the "main" branch and releasing
+      # Publish to /latest if we are releasing
       - name: Publish latest reference docs (main branch)
         uses: peaceiris/actions-gh-pages@v3
-        if: github.event_name == 'release' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'release'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: docs/python/html

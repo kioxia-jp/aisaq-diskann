@@ -4,7 +4,7 @@
 
 #include "common_includes.h"
 
-#if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
+#if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
 #endif
 
@@ -560,7 +560,21 @@ void breakup_dense_points(const std::string data_file, const std::string labels_
     if (dummy_pt_ids.size() != 0)
     {
         diskann::cout << dummy_pt_ids.size() << " is the number of dummy points created" << std::endl;
-        data = (T *)std::realloc((void *)data, labels_per_point.size() * ndims * sizeof(T));
+
+        T *ptr = (T *)std::realloc((void *)data, labels_per_point.size() * ndims * sizeof(T));
+        if (ptr == nullptr)
+        {
+            diskann::cerr << "Realloc failed while creating dummy points" << std::endl;
+            free(data);
+            data = nullptr;
+            throw new diskann::ANNException("Realloc failed while expanding data.", -1, __FUNCTION__, __FILE__,
+                                            __LINE__);
+        }
+        else
+        {
+            data = ptr;
+        }
+
         std::ofstream dummy_writer(out_metadata_file);
         assert(dummy_writer.is_open());
         for (auto i = dummy_pt_ids.begin(); i != dummy_pt_ids.end(); i++)
@@ -636,9 +650,10 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                                                   .with_num_threads(num_threads)
                                                   .build();
         using TagT = uint32_t;
-        diskann::Index<T, TagT, LabelT> _index(
-            compareMetric, base_dim, base_num, std::make_shared<diskann::IndexWriteParameters>(paras), nullptr,
-            paras.num_frozen_points, false, false, false, build_pq_bytes > 0, build_pq_bytes, use_opq);
+        diskann::Index<T, TagT, LabelT> _index(compareMetric, base_dim, base_num,
+                                               std::make_shared<diskann::IndexWriteParameters>(paras), nullptr,
+                                               defaults::NUM_FROZEN_POINTS_STATIC, false, false, false,
+                                               build_pq_bytes > 0, build_pq_bytes, use_opq, use_filters);
         if (!use_filters)
             _index.build(base_file.c_str(), base_num);
         else
@@ -675,7 +690,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     Timer timer;
     int num_parts =
         partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget, 2 * R / 3, merged_index_prefix, 2);
-    diskann::cout << timer.elapsed_seconds_for_step("partitioning data") << std::endl;
+    diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
 
     std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
     std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
@@ -683,6 +698,10 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     timer.reset();
     for (int p = 0; p < num_parts; p++)
     {
+#if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
+        MallocExtension::instance()->ReleaseFreeMemory();
+#endif
+
         std::string shard_base_file = merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";
 
         std::string shard_ids_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_ids_uint32.bin";
@@ -704,7 +723,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 
         diskann::Index<T> _index(compareMetric, shard_base_dim, shard_base_pts,
                                  std::make_shared<diskann::IndexWriteParameters>(low_degree_params), nullptr,
-                                 low_degree_params.num_frozen_points, false, false, false, build_pq_bytes > 0,
+                                 defaults::NUM_FROZEN_POINTS_STATIC, false, false, false, build_pq_bytes > 0,
                                  build_pq_bytes, use_opq);
         if (!use_filters)
         {
@@ -1326,11 +1345,12 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
         return -1;
     }
 
-    if (!std::is_same<T, float>::value && compareMetric == diskann::Metric::INNER_PRODUCT)
+    if (!std::is_same<T, float>::value &&
+        (compareMetric == diskann::Metric::INNER_PRODUCT || compareMetric == diskann::Metric::COSINE))
     {
         std::stringstream stream;
-        stream << "DiskANN currently only supports floating point data for Max "
-                  "Inner Product Search. "
+        stream << "Disk-index build currently only supports floating point data for Max "
+                  "Inner Product Search/ cosine similarity. "
                << std::endl;
         throw diskann::ANNException(stream.str(), -1);
     }
@@ -1385,14 +1405,18 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     std::string mem_univ_label_file = mem_index_path + "_universal_label.txt";
     std::string disk_univ_label_file = disk_index_path + "_universal_label.txt";
     std::string disk_labels_int_map_file = disk_index_path + "_labels_map.txt";
-    std::string dummy_remap_file = disk_index_path + "_dummy_remap.txt"; // remap will be used if we break-up points of
-                                                                         // high label-density to create copies
+    std::string dummy_remap_file = disk_index_path + "_dummy_map.txt"; // remap will be used if we break-up points of
+                                                                       // high label-density to create copies
 
     std::string sample_base_prefix = index_prefix_path + "_sample";
     // optional, used if disk index file must store pq data
     std::string disk_pq_pivots_path = index_prefix_path + "_disk.index_pq_pivots.bin";
     // optional, used if disk index must store pq data
     std::string disk_pq_compressed_vectors_path = index_prefix_path + "_disk.index_pq_compressed.bin";
+    std::string prepped_base =
+        index_prefix_path +
+        "_prepped_base.bin"; // temp file for storing pre-processed base file for cosine/ mips metrics
+    bool created_temp_file_for_processed_data = false;
 
     // output a new base file which contains extra dimension with sqrt(1 -
     // ||x||^2/M^2) for every x, M is max norm of all points. Extra space on
@@ -1403,7 +1427,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
         std::cout << "Using Inner Product search, so need to pre-process base "
                      "data into temp file. Please ensure there is additional "
                      "(n*(d+1)*4) bytes for storing pre-processed base vectors, "
-                     "apart from the intermin indices and final index."
+                     "apart from the interim indices created by DiskANN and the final index."
                   << std::endl;
         std::string prepped_base = index_prefix_path + "_prepped_base.bin";
         std::string norm_file = disk_index_path + "_max_base_norm.bin";
@@ -1481,7 +1505,6 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
         augmented_labels_file = index_prefix_path + "_augmented_labels.txt";
         if (filter_threshold != 0)
         {
-            dummy_remap_file = index_prefix_path + "_dummy_remap.txt";
             breakup_dense_points<T>(data_file_to_use, labels_file_to_use, filter_threshold, augmented_data_file,
                                     augmented_labels_file,
                                     dummy_remap_file); // RKNOTE: This has large memory footprint,
@@ -1530,10 +1553,10 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
 
 // Gopal. Splitting diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
-#if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
+#if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
     MallocExtension::instance()->ReleaseFreeMemory();
 #endif
-
+    // Whether it is cosine or inner product, we still L2 metric due to the pre-processing.
     timer.reset();
     diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
                                                   indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
@@ -1580,6 +1603,11 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     }
 
     // std::remove(mem_index_path.c_str());
+    if (created_temp_file_for_processed_data)
+        std::remove(prepped_base.c_str());
+    std::remove(mem_index_path.c_str());
+    std::remove((mem_index_path + ".data").c_str());
+    std::remove((mem_index_path + ".tags").c_str());
     if (use_disk_pq)
         std::remove(disk_pq_compressed_vectors_path.c_str());
 
