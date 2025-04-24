@@ -631,7 +631,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                               std::string medoids_file, std::string centroids_file, size_t build_pq_bytes, bool use_opq,
                               uint32_t num_threads, bool use_filters, const std::string &label_file,
                               const std::string &labels_to_medoids_file, const std::string &universal_label,
-                              const uint32_t Lf, const int num_entry_points)
+                              const uint32_t Lf)
 {
     size_t base_num, base_dim;
     diskann::get_bin_metadata(base_file, base_num, base_dim);
@@ -639,7 +639,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     double full_index_ram = estimate_ram_usage(base_num, (uint32_t)base_dim, sizeof(T), R);
 
     // TODO: Make this honest when there is filter support
-    if (full_index_ram < ram_budget * 1024 * 1024 * 1024 && num_entry_points <= 1)
+    if (full_index_ram < ram_budget * 1024 * 1024 * 1024)
     {
         diskann::cout << "Full index fits in RAM budget, should consume at most "
                       << full_index_ram / (1024 * 1024 * 1024) << "GiBs, so building in one shot" << std::endl;
@@ -688,15 +688,8 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
 
     Timer timer;
-    int min_num_parts;
-    if (num_entry_points > 0) {
-        diskann::cout << "building with " << num_entry_points << "entry points" << std::endl;
-        min_num_parts = num_entry_points;
-    } else {
-        min_num_parts = 3;
-    }
     int num_parts =
-        partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget, 2 * R / 3, merged_index_prefix, 2, min_num_parts);
+        partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget, 2 * R / 3, merged_index_prefix, 2);
     diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
 
     std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
@@ -886,7 +879,7 @@ template <typename T>
 void create_disk_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,
                         const std::string reorder_data_file,
                         const std::string &index_prefix_path,
-                        int inline_pq /* control num of inline pq: -1=none, 0=auto, others: num of pq vectors <= R */,
+                        int inline_pq /* control num of inline pq: -1=auto, 0-R=num of inline pq vectors */,
                         bool rearrange /* enable vectors reaarangement */)
 {
     uint32_t npts, ndims;
@@ -984,14 +977,22 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
 
     /* calculate num of inline vectors */
     uint32_t inline_pq_vectors = 0;
-    if (inline_pq >= 0) {
+    if (inline_pq == 0) {
+        /* no inline */
+        if (rearrange) {
+            max_node_len+= sizeof(uint32_t);
+        }
+    } else {
         if (inline_pq > 0) {
+            /* manual setting */
             assert(inline_pq <= width_u32);
             inline_pq_vectors = inline_pq;
             if (rearrange && inline_pq_vectors < width_u32) {
                 max_node_len+= sizeof(uint32_t);
             }
         } else {
+            /* auto */
+            assert(inline_pq == -1);
             /* calculate the number of compressed vectors that can be appended to the node without increasing the index file size */
             uint32_t _n_inline = aisaq_calc_max_inline_pq_vectors(max_node_len, pq_compressed_nbytes, width_u32);
             if (rearrange && _n_inline < width_u32) {
@@ -1013,10 +1014,6 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
         } else {
             diskann::cout << inline_pq_vectors << " (" << (inline_pq_vectors * 100) / width_u32
                           << "%) PQ vectors will be stored inline" << std::endl;
-        }
-    } else {
-        if (rearrange) {
-            max_node_len+= sizeof(uint32_t);
         }
     }
     uint32_t __nnodes, __nsectors, __remainder;
@@ -1065,13 +1062,33 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
             offset+= (nnbrs + 1) * sizeof(uint32_t);
             vamana_reader_node_to_pos_map[i] = offset;
         }
+        std::string medoids_path = index_prefix_path + "_disk.index_medoids.bin";
+        std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
+        uint32_t *entry_points;
+        size_t n_entry_points, __dim;
+        bool ep_from_file = false;
+        if (file_exists(entry_points_path)) {
+            diskann::load_bin<uint32_t>(entry_points_path, entry_points, n_entry_points, __dim, 0);
+            ep_from_file = true;
+        } else {
+            if (file_exists(medoids_path)) {
+                diskann::load_bin<uint32_t>(medoids_path, entry_points, n_entry_points, __dim, 0);
+                ep_from_file = true;
+            } else {
+                entry_points = &medoid_u32;
+                n_entry_points = 1;
+            }
+        }
         std::unordered_map<uint32_t, std::vector<uint32_t>> filter_to_medoid_ids;
         struct vamana_read_context context(vamana_reader, vamana_reader_node_to_pos_map);
         if (aisaq_generate_vectors_rearrange_map<T, uint32_t>(aisaq_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
-            pq_compressed_nbytes , width_u32, &medoid_u32, 1, filter_to_medoid_ids,
+            pq_compressed_nbytes , width_u32, entry_points, n_entry_points, filter_to_medoid_ids,
             read_node_nbrs_from_vamana<T, uint32_t>, &context) != 0) {
             throw ANNException("failed to generate rearranged vectors data"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+        if (ep_from_file) {
+            delete [] entry_points;
         }
         /* restore last position */
         vamana_reader.seekg(pos, vamana_reader.beg);
@@ -1117,49 +1134,17 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
             throw ANNException("failed to create aligned rearranged pq vectors file"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);
         };
-        /* translate medioid */
+        /* translate medoid */
         medoid_u32 = rearranged_vectors_map[medoid_u32];
-        /* generate rearranged medoid file - file translated inline */
-        std::string medoids_path = index_prefix_path + "_disk.index_medoids.bin";
+        /* generate rearranged medoid file - translated inline */
         if (file_exists(medoids_path)) {
-            diskann::cout << "rearranging medoids file " << medoids_path << "...";
-            std::fstream medoids_file;
-            medoids_file.exceptions(std::fstream::failbit | std::fstream::badbit);
-            try {
-                uint32_t nmedoids, _val;
-                medoids_file.open(medoids_path, std::ios::binary | std::ios::in | std::ios::out);
-                medoids_file.read((char *)&nmedoids, sizeof(uint32_t));
-                medoids_file.read((char *)&_val, sizeof(uint32_t));
-                if (_val != 1) {
-                    throw ANNException("medoids file seems corrupted",
-                                       -1, __FUNCSIG__, __FILE__, __LINE__);
-                }
-                if (get_file_size(medoids_path) != ((sizeof(uint32_t) * 2) + (nmedoids * sizeof(uint32_t)))) {
-                    throw ANNException("Discrepancy in msdoids file size",
-                                    -1, __FUNCSIG__, __FILE__, __LINE__);
-                }
-                uint32_t _mediods_buff[128];
-                uint32_t m = 0;
-                while (m < nmedoids) {
-                    int _count = std::min((int)(nmedoids - m), (int)(sizeof(_mediods_buff) / sizeof(_mediods_buff[0])));
-                    /* handle next m_count medioids */
-                    /* read medioids */
-                    medoids_file.read((char *)_mediods_buff, _count * sizeof(uint32_t));
-                    /* translate medioids */
-                    for (uint32_t i = 0; i < _count; i++) {
-                        assert(_mediods_buff[i] < npts_64);
-                        _mediods_buff[i] = rearranged_vectors_map[_mediods_buff[i]];
-                    }
-                    /* overwrite medioids - seek-back & write */
-                    medoids_file.seekg(-_count * sizeof(uint32_t), std::ios::cur);
-                    medoids_file.write((char *)_mediods_buff, _count * sizeof(uint32_t));
-                    m+= _count;
-                };
-                medoids_file.close();
-            } catch (std::system_error &e) {
-                throw FileException(medoids_path, e, __FUNCSIG__, __FILE__, __LINE__);
-            }
-            diskann::cout << "done" << std::endl;
+            diskann::cout << "rearranging medoids file " << medoids_path << std::endl;
+            aisaq_rearrange_vectors_file(medoids_path, rearranged_vectors_map, npts_64);
+        }
+        /* generate rearranged entry points file - translated inline */
+        if (file_exists(entry_points_path)) {
+            diskann::cout << "rearranging entry points file " << entry_points_path << std::endl;
+            aisaq_rearrange_vectors_file(entry_points_path, rearranged_vectors_map, npts_64);
         }
     }
 
@@ -1471,7 +1456,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
                          "full precision vectors)\n"
                          "QD Quantized Dimension to overwrite the derived dim from B\n"
                          "inline-pq (aisaq: number of inline pq vectors)\n"
-                         "rearrange (aisaq: rearrange vectors)\n"
+                         "rearrange (aisaq: enable vectors rearrangement)\n"
                          "num_entry_points (aisaq: number of entry points to generate)"
                       << std::endl;
         return -1;
@@ -1669,7 +1654,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     MallocExtension::instance()->ReleaseFreeMemory();
 #endif
 
-    int inline_pq = -1;
+    int inline_pq = 0;
     bool rearrange = false;
     int num_entry_points = 0;
     if (param_list.size() > 9) {
@@ -1687,10 +1672,23 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
                                                   indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
                                                   build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
-                                                  labels_to_medoids_path, universal_label, Lf, num_entry_points);
+                                                  labels_to_medoids_path, universal_label, Lf);
     diskann::cout << timer.elapsed_seconds_for_step("building merged vamana index") << std::endl;
 
-    std::cout << "all-in-storage build - " << "inline-pq: " << inline_pq << ", rearrange: " << rearrange << std::endl;
+    std::cout << "aisaq build - " << "inline-pq: " << inline_pq
+              << ", rearrange: " << rearrange << ", entry points: " << num_entry_points << std::endl;
+
+    if (num_entry_points > 0) {
+        std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
+        std::cout << "generating entry points file: " << entry_points_path << std::endl;
+        if (file_exists(entry_points_path)) {
+            delete_file(entry_points_path);
+        }
+        if (partition_calc_kmeans<T>(data_file_to_use, entry_points_path, num_entry_points) != 0) {
+            std::cerr << "failed to generate entry points file" << std::endl;
+            return -1;
+        }
+    }
 
     timer.reset();
     if (!use_disk_pq)
@@ -1850,37 +1848,31 @@ template DISKANN_DLLEXPORT int build_merged_vamana_index<int8_t, uint32_t>(
     std::string base_file, diskann::Metric compareMetric, uint32_t L, uint32_t R, double sampling_rate,
     double ram_budget, std::string mem_index_path, std::string medoids_path, std::string centroids_file,
     size_t build_pq_bytes, bool use_opq, uint32_t num_threads, bool use_filters, const std::string &label_file,
-    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf,
-    const int num_entry_points);
+    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf);
 template DISKANN_DLLEXPORT int build_merged_vamana_index<float, uint32_t>(
     std::string base_file, diskann::Metric compareMetric, uint32_t L, uint32_t R, double sampling_rate,
     double ram_budget, std::string mem_index_path, std::string medoids_path, std::string centroids_file,
     size_t build_pq_bytes, bool use_opq, uint32_t num_threads, bool use_filters, const std::string &label_file,
-    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf,
-    const int num_entry_points);
+    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf);
 template DISKANN_DLLEXPORT int build_merged_vamana_index<uint8_t, uint32_t>(
     std::string base_file, diskann::Metric compareMetric, uint32_t L, uint32_t R, double sampling_rate,
     double ram_budget, std::string mem_index_path, std::string medoids_path, std::string centroids_file,
     size_t build_pq_bytes, bool use_opq, uint32_t num_threads, bool use_filters, const std::string &label_file,
-    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf,
-    const int num_entry_points);
+    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf);
 // Label=16_t
 template DISKANN_DLLEXPORT int build_merged_vamana_index<int8_t, uint16_t>(
     std::string base_file, diskann::Metric compareMetric, uint32_t L, uint32_t R, double sampling_rate,
     double ram_budget, std::string mem_index_path, std::string medoids_path, std::string centroids_file,
     size_t build_pq_bytes, bool use_opq, uint32_t num_threads, bool use_filters, const std::string &label_file,
-    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf,
-    const int num_entry_points);
+    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf);
 template DISKANN_DLLEXPORT int build_merged_vamana_index<float, uint16_t>(
     std::string base_file, diskann::Metric compareMetric, uint32_t L, uint32_t R, double sampling_rate,
     double ram_budget, std::string mem_index_path, std::string medoids_path, std::string centroids_file,
     size_t build_pq_bytes, bool use_opq, uint32_t num_threads, bool use_filters, const std::string &label_file,
-    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf,
-    const int num_entry_points);
+    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf);
 template DISKANN_DLLEXPORT int build_merged_vamana_index<uint8_t, uint16_t>(
     std::string base_file, diskann::Metric compareMetric, uint32_t L, uint32_t R, double sampling_rate,
     double ram_budget, std::string mem_index_path, std::string medoids_path, std::string centroids_file,
     size_t build_pq_bytes, bool use_opq, uint32_t num_threads, bool use_filters, const std::string &label_file,
-    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf,
-    const int num_entry_points);
+    const std::string &labels_to_medoids_file, const std::string &universal_label, const uint32_t Lf);
 }; // namespace diskann

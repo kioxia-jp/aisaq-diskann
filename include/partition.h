@@ -20,7 +20,7 @@ void gen_random_slice(const std::string base_file, const std::string output_pref
 
 template <typename T>
 void gen_random_slice(const std::string data_file, double p_val, float *&sampled_data, size_t &slice_size,
-                      size_t &ndims);
+                      size_t &ndims, std::vector<uint32_t> *sampled_ids = nullptr);
 
 template <typename T>
 void gen_random_slice(const T *inputdata, size_t npts, size_t ndims, double p_val, float *&sampled_data,
@@ -46,4 +46,7 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
 
 template <typename T>
 int partition_with_ram_budget(const std::string data_file, const double sampling_rate, double ram_budget,
-                              size_t graph_degree, const std::string prefix_path, size_t k_base, int min_num_parts = 3);
+                              size_t graph_degree, const std::string prefix_path, size_t k_base);
+
+template <typename T>
+int partition_calc_kmeans(const std::string &data_file, const std::string &output_file, size_t k);

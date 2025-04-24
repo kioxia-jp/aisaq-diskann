@@ -5,7 +5,7 @@ AiSAQ can now be tuned for best performance by storing all PQ vectors inline as 
 This code was forked from [code for Microsoft DiskANN](https://github.com/Microsoft/DiskANN) algorithm. The index search is described in [our arXiv paper](https://arxiv.org/abs/2404.06004).
 
 ### AiSAQ-DiskANN includes the following enhancements:
-1. Scalable, DRAM-free search - The PQ vectors are not loaded into DRAM during disk-index-search, instead they are being read from the media on demand.
+1. Scalable & DRAM-free search - The PQ vectors are not loaded into DRAM during disk-index-search, instead they are being read from the media on demand.
 2. Inline PQ vectors - Some or all PQ vectors may be stored as part of the index node, saving IOs during search.
 3. Vectors rearrangement - Optimal rearrangement of the vectors in a way that the number of IOs needed to read the PQ vectors from the media during search will be minimal.
 4. Multiple entry points - Generate multiple entry points to minimize the number of search iterations. 
@@ -13,7 +13,6 @@ This code was forked from [code for Microsoft DiskANN](https://github.com/Micros
 6. Greedy search algorithm improvements.
 7. Static PQ vectors cache - Common static cache of PQ vectors, populated during load prior search.
 8. Dynamic PQ vectors read cache - A dynamic page level read cache of PQ vectors, managed per-thread using LRU eviction policy.
-9. Support older version of AiSAQ index (deprecated).
 
 The usage of our additional AiSAQ indices is described below:
 

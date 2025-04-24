@@ -67,34 +67,36 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
 
     diskann::cout << ", search-mode: ";
     if (aisaq_search_config.aisaq) {
-        diskann::cout << "aisaq, vector-beamwidth: " << aisaq_search_config.vector_beamwidth
-                      << ", pq-read-io-engine: " << aisaq_get_io_engine_string(aisaq_search_config.pq_io_engine)
-                      << ", pq-cache-size: ";
-        if (aisaq_search_config.pq_cache_size > 0) {
-            switch (aisaq_search_config.pq_cache_size_unit) {
-                case diskann::aisaq_size_unit_vectors:
-                    diskann::cout << aisaq_search_config.pq_cache_size << " vectors";
-                break;
-                case diskann::aisaq_size_unit_bytes:
-                    diskann::cout << aisaq_search_config.pq_cache_size << " bytes";
-                break;
-                case diskann::aisaq_size_unit_milli_percent:
-                    diskann::cout << ((double)aisaq_search_config.pq_cache_size / 1000) << " %";
-                break;
+        if (aisaq_search_config.aisaq_deprecated) {
+            diskann::cout << "aisaq-deprecated";
+        } else {
+            diskann::cout << "aisaq, vector-beamwidth: " << aisaq_search_config.vector_beamwidth
+                          << ", pq-read-io-engine: " << aisaq_get_io_engine_string(aisaq_search_config.pq_io_engine)
+                          << ", pq-cache-size: ";
+            if (aisaq_search_config.pq_cache_size > 0) {
+                switch (aisaq_search_config.pq_cache_size_unit) {
+                    case diskann::aisaq_size_unit_vectors:
+                        diskann::cout << aisaq_search_config.pq_cache_size << " vectors";
+                    break;
+                    case diskann::aisaq_size_unit_bytes:
+                        diskann::cout << aisaq_search_config.pq_cache_size << " bytes";
+                    break;
+                    case diskann::aisaq_size_unit_milli_percent:
+                        diskann::cout << ((double)aisaq_search_config.pq_cache_size / 1000) << " %";
+                    break;
+                }
+            } else {
+                diskann::cout << "0";
             }
-        } else {
-            diskann::cout << "0";
+            diskann::cout << ", pq-read-page-cache-size: ";
+            if (aisaq_search_config.pq_read_page_cache_size > 0) {
+                diskann::cout << aisaq_search_config.pq_read_page_cache_size << " bytes (per thread)";
+            } else {
+                diskann::cout << "0";
+            }
         }
-        diskann::cout << ", pq-read-page-cache-size: ";
-        if (aisaq_search_config.pq_read_page_cache_size > 0) {
-            diskann::cout << aisaq_search_config.pq_read_page_cache_size << " bytes (per thread)";
-        } else {
-            diskann::cout << "0";
-        }
-    } else if (aisaq_search_config.aisaq_deprecated) {
-        diskann::cout << "aisaq-deprecated";
     } else {
-        diskann::cout << "disk-ann";
+        diskann::cout << "diskann";
     }
 
     if (search_io_limit == std::numeric_limits<uint32_t>::max())
@@ -170,23 +172,23 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
 
     /* load pq cache */
     if (aisaq_search_config.aisaq) {
-        uint64_t pq_cache_size_bytes;
-        if (aisaq_search_config.pq_cache_size_unit == diskann::aisaq_size_unit_vectors) {
-            pq_cache_size_bytes = aisaq_search_config.pq_cache_size * _pFlashIndex->get_n_chunks() * sizeof(uint8_t);
-        } else if (aisaq_search_config.pq_cache_size_unit == diskann::aisaq_size_unit_milli_percent) {
-            assert(aisaq_search_config.pq_cache_size <= 100000);
-            pq_cache_size_bytes = ((aisaq_search_config.pq_cache_size * _pFlashIndex->get_num_points()) / 100000) *
-                                                (_pFlashIndex->get_n_chunks() * sizeof(uint8_t));
-        } else {
-            /* bytes */
-            pq_cache_size_bytes = aisaq_search_config.pq_cache_size;
+        if (!aisaq_search_config.aisaq_deprecated) {
+            uint64_t pq_cache_size_bytes;
+            if (aisaq_search_config.pq_cache_size_unit == diskann::aisaq_size_unit_vectors) {
+                pq_cache_size_bytes = aisaq_search_config.pq_cache_size * _pFlashIndex->get_n_chunks() * sizeof(uint8_t);
+            } else if (aisaq_search_config.pq_cache_size_unit == diskann::aisaq_size_unit_milli_percent) {
+                assert(aisaq_search_config.pq_cache_size <= 100000);
+                pq_cache_size_bytes = ((aisaq_search_config.pq_cache_size * _pFlashIndex->get_num_points()) / 100000) *
+                                                    (_pFlashIndex->get_n_chunks() * sizeof(uint8_t));
+            } else {
+                /* bytes */
+                pq_cache_size_bytes = aisaq_search_config.pq_cache_size;
+            }
+            if (pq_cache_size_bytes > 0) {
+                std::string pq_compressed_vectors_path = index_path_prefix + "_pq_compressed.bin";
+                _pFlashIndex->aisaq_load_pq_cache(pq_compressed_vectors_path, pq_cache_size_bytes, diskann::aisaq_pq_cache_policy_auto);
+            }
         }
-        if (pq_cache_size_bytes > 0) {
-            std::string pq_compressed_vectors_path = index_path_prefix + "_pq_compressed.bin";
-            _pFlashIndex->aisaq_load_pq_cache(pq_compressed_vectors_path, pq_cache_size_bytes, diskann::aisaq_pq_cache_policy_auto);
-        }
-    }
-    if (aisaq_search_config.aisaq || aisaq_search_config.aisaq_deprecated) {
         if (_pFlashIndex->aisaq_init(aisaq_search_config, index_path_prefix.c_str()) != 0) {
             return -1;
         }
@@ -386,7 +388,7 @@ int main(int argc, char **argv)
     bool use_reorder_data = false;
     float fail_if_recall_below = 0.0f;
     /* aisaq related params/options */
-    bool aisaq = false, aisaq_deprecated = false;
+    bool aisaq = false;
     uint32_t aisaq_pq_vector_beamwidth;
     std::string aisaq_pq_read_io_engine;
     std::string aisaq_pq_cache_size_string;
@@ -447,28 +449,25 @@ int main(int argc, char **argv)
                                        po::value<float>(&fail_if_recall_below)->default_value(0.0f),
                                        program_options_utils::FAIL_IF_RECALL_BELOW);
         /* aisaq params/options */
-        optional_configs.add_options()("aisaq_deprecated",
-                                       po::bool_switch(&aisaq_deprecated)->default_value(false),
-                                       "enable search with an older version of aisaq index.");
-        optional_configs.add_options()("aisaq",
+        optional_configs.add_options()("use_aisaq",
                                        po::bool_switch(&aisaq)->default_value(false),
                                        "enable aisaq search, when enabled, the PQ vectors will be read from the media on demand.");
         optional_configs.add_options()("vector_beamwidth,V", po::value<uint32_t>(&aisaq_pq_vector_beamwidth)->default_value(1),
-                                       "the vector beamwidth to be used for search. value must be <= W. valid only with aisaq option.");
+                                       "the vector beamwidth to be used for search. value must be <= W. valid only with use_aisaq option.");
         optional_configs.add_options()("pq_read_io_engine",
                                         po::value<std::string>(&aisaq_pq_read_io_engine)->default_value("aio"),
                                         "pq vectors read io engine to use, one of {aio, uring}. "
-                                        "valid only with aisaq option.");
+                                        "valid only with use_aisaq option.");
         optional_configs.add_options()("pq_cache_size",
                                         po::value<std::string>(&aisaq_pq_cache_size_string)->default_value("0"),
                                        "PQ vectors cache DRAM size, may be specified in B, KB, MB, GB or in % of the total vectors. "
                                        "you may use B/K/M/G/% suffix to specify this value, if no suffix, specified as the number of vectors "
-                                       "(e.g. 0.8%, 0.6G, or 100000). valid only with aisaq option.");
+                                       "(e.g. 0.8%, 0.6G, or 100000). valid only with use_aisaq option.");
         optional_configs.add_options()("pq_read_page_cache_size",
                                        po::value<std::string>(&aisaq_pq_read_page_cache_size_string)->default_value("0"),
                                        "PQ vectors read page cache DRAM size - per thread, may be specified in B, KB, MB or GB. "
                                        "you may use B/K/M/G suffix to specify this value, if no suffix, specified in Bytes. "
-                                       "applicable only with index that was built with rearrange option. valid only with aisaq option.");
+                                       "applicable only with index that was built with rearrange option. valid only with use_aisaq option.");
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
 
@@ -489,15 +488,8 @@ int main(int argc, char **argv)
         if (vm["use_reorder_data"].as<bool>())
             use_reorder_data = true;
         /* validate aisaq options */
-        if (!vm["aisaq"].defaulted()) {
-            /* aisaq was specified */
-            if (!vm["aisaq_deprecated"].defaulted()) {
-                /* aisaq_deprecated was specified */
-                std::cerr << "you may choose aisaq or aisaq_deprecated option, not both." << std::endl;
-                return -1;
-            }
-        } else {
-            /* aisaq was not specified */
+        if (vm["use_aisaq"].defaulted()) {
+            /* use_aisaq was not specified */
             if (!vm["vector_beamwidth"].defaulted()) {
                 std::cerr << "vector_beamwidth can only be used with aisaq option." << std::endl;
                 return -1;
@@ -574,14 +566,13 @@ int main(int argc, char **argv)
     }
 
     struct diskann::aisaq_search_config aisaq_search_config;
-    aisaq_search_config.aisaq_deprecated = aisaq_deprecated;
     aisaq_search_config.aisaq = aisaq;
-    /* initialize with default values */
-    aisaq_search_config.vector_beamwidth = 1;
-    aisaq_search_config.pq_io_engine = diskann::aisaq_pq_io_engine_aio;
-    aisaq_search_config.pq_cache_size = 0;
-    aisaq_search_config.pq_read_page_cache_size = 0;
+    aisaq_search_config.aisaq_deprecated = false;
     if (aisaq) {
+        std::string aisaq_deprecated_index_file = index_path_prefix + "_aisaq.index";
+        if (file_exists(aisaq_deprecated_index_file.c_str())) {
+            aisaq_search_config.aisaq_deprecated = true;
+        }
         /* parse and validate aisaq params/options */
         /* vector_beamwidth */
         if (aisaq_pq_vector_beamwidth > 1 && W == 0) {
@@ -594,6 +585,7 @@ int main(int argc, char **argv)
         }
         aisaq_search_config.vector_beamwidth = aisaq_pq_vector_beamwidth;
         /* pq_io_engine */
+        aisaq_search_config.pq_io_engine = diskann::aisaq_pq_io_engine_aio;
         if (aisaq_pq_read_io_engine == std::string("aio")) {
             aisaq_search_config.pq_io_engine = diskann::aisaq_pq_io_engine_aio;
         } else if (aisaq_pq_read_io_engine == std::string("uring")) {
@@ -603,6 +595,7 @@ int main(int argc, char **argv)
             return -1;
         }
         /* pq_cache_size & pq_cache_size_unit */
+        aisaq_search_config.pq_cache_size = 0;
         aisaq_search_config.pq_cache_size_unit = diskann::aisaq_size_unit_vectors;
         while (aisaq_pq_cache_size_string != std::string("")) {
             /* handle % */
@@ -655,6 +648,7 @@ int main(int argc, char **argv)
             break;
         };
         /* pq_read_page_cache_size */
+        aisaq_search_config.pq_read_page_cache_size = 0;
         while (aisaq_pq_read_page_cache_size_string != std::string("")) {
             /* handle B, just remove it, this will allow handling KB/MB/GB as well */
             if (aisaq_pq_read_page_cache_size_string.back() == 'B' || aisaq_pq_read_page_cache_size_string.back() == 'b') {

@@ -22,11 +22,14 @@ int main(int argc, char **argv)
     float B, M;
     bool append_reorder_data = false;
     bool use_opq = false;
+    /* aisaq related vars */
+    bool aisaq = false;
+    int aisaq_inline_pq = 0;
     bool aisaq_rearrange = false;
-    int aisaq_inline_pq = -1;
     uint32_t aisaq_num_entry_points = 0;
-    bool aisaq_enable_inline_pq;
-    bool aisaq_enable_entry_points;
+    bool aisaq_inline_pq_param_set;
+    bool aisaq_rearrange_param_set;
+    bool aisaq_num_entry_points_param_set;
 
     po::options_description desc{
         program_options_utils::make_program_description("build_disk_index", "Build a disk-based index.")};
@@ -86,19 +89,23 @@ int main(int argc, char **argv)
         optional_configs.add_options()("label_type", po::value<std::string>(&label_type)->default_value("uint"),
                                        program_options_utils::LABEL_TYPE_DESCRIPTION);
         /* aisaq related params/options */
+        optional_configs.add_options()("use_aisaq",
+                                       po::bool_switch(&aisaq)->default_value(false),
+                                       "enable aisaq build");
         optional_configs.add_options()("inline_pq",
                                        po::value<int32_t>(&aisaq_inline_pq),
                                        "set the number of pq vectors to be stored inline as part of the index node, "
-                                       "pass 0 for auto, pass R value to store all PQ vectors inline, value must be <= R.");
+                                       "pass -1 for auto, 0 for none, R for all inline, by default all PQ vectors will be stored inline. "
+                                       "valid only with use_aisaq option.");
         optional_configs.add_options()("rearrange",
                                        po::bool_switch(&aisaq_rearrange)->default_value(false),
                                        "enable vectors rearrangement, when enabled, each vector will be assigned "
                                        "and stored with a new id, in a way that the number of IOs needed to read "
-                                       "the PQ vectors during search will be minimal.");
+                                       "the PQ vectors during search will be minimal. valid only with use_aisaq option.");
         optional_configs.add_options()("num_entry_points",
                                        po::value<uint32_t>(&aisaq_num_entry_points),
                                        "number of entry points that should be generated to be used as a "
-                                       "search start points. value must be between 1 and 256.");
+                                       "search start points. value must be between 1 and 1000. valid only with use_aisaq option.");
 
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
@@ -121,8 +128,9 @@ int main(int argc, char **argv)
             append_reorder_data = true;
         if (vm["use_opq"].as<bool>())
             use_opq = true;
-        aisaq_enable_inline_pq = !vm["inline_pq"].empty();
-        aisaq_enable_entry_points = !vm["num_entry_points"].empty();
+        aisaq_inline_pq_param_set = !vm["inline_pq"].empty();
+        aisaq_num_entry_points_param_set = !vm["num_entry_points"].empty();
+        aisaq_rearrange_param_set = !vm["rearrange"].empty();
     }
     catch (const std::exception &ex)
     {
@@ -161,17 +169,37 @@ int main(int argc, char **argv)
             return -1;
         }
     }
-    /* validate inline_pq */
-    if (aisaq_enable_inline_pq && (aisaq_inline_pq < 0 || aisaq_inline_pq > R)) {
-        diskann::cerr << "Error: inline_pq value must be between 0 and R" << std::endl;
-        return -1;
+    if (aisaq) {
+        /* validate inline_pq */
+        if (aisaq_inline_pq_param_set) {
+            if (aisaq_inline_pq < -1 || aisaq_inline_pq > R) {
+                diskann::cerr << "Error: inline_pq value must be between -1 and R" << std::endl;
+                return -1;
+            }
+        } else {
+            /* default value */
+            aisaq_inline_pq = R;
+        }
+        /* validate num_entry_points */
+        if (aisaq_num_entry_points_param_set && (aisaq_num_entry_points < 1 || aisaq_num_entry_points > 1000)) {
+            diskann::cerr << "Error: num_entry_points value must be between 1 and 1000" << std::endl;
+            return -1;
+        }
+    } else {
+        /* use_aisaq was not specified */
+        if (aisaq_inline_pq_param_set) {
+            std::cerr << "inline_pq can only be used with use_aisaq option." << std::endl;
+            return -1;
+        }
+        if (aisaq_rearrange_param_set) {
+            std::cerr << "rearrange can only be used with use_aisaq option." << std::endl;
+            return -1;
+        }
+        if (aisaq_num_entry_points_param_set) {
+            std::cerr << "num_entry_points can only be used with use_aisaq option." << std::endl;
+            return -1;
+        }
     }
-    /* validate num_entry_points */
-    if (aisaq_enable_entry_points && (aisaq_num_entry_points < 1 || aisaq_num_entry_points > 256)) {
-        diskann::cerr << "Error: num_entry_points value must be between 1 and 256" << std::endl;
-        return -1;
-    }
-
     std::string params = std::string(std::to_string(R)) + " " + std::string(std::to_string(L)) + " " +
                          std::string(std::to_string(B)) + " " + std::string(std::to_string(M)) + " " +
                          std::string(std::to_string(num_threads)) + " " + std::string(std::to_string(disk_PQ)) + " " +

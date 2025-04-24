@@ -383,6 +383,23 @@ int aisaq_create_aligned_rearranged_pq_compressed_vectors_file(const std::string
     return ret;
 }
 
+int aisaq_rearrange_vectors_file(const std::string &file_path, const uint32_t *rearrange_map, uint32_t map_size)
+{
+    if (!file_exists(file_path)) {
+        return -1;
+    }
+    uint32_t *data;
+    size_t npts, dim;
+    diskann::load_bin<uint32_t>(file_path, data, npts, dim, 0);
+    assert(dim == 1);
+    for (unsigned int i = 0; i < npts; i++) {
+        assert(data[i] < map_size);
+        data[i] = rearrange_map[data[i]];
+    }
+    diskann::save_bin<uint32_t>(file_path, data, npts, dim, 0);
+    return 0;
+}
+
 const char *aisaq_get_io_engine_string(enum aisaq_pq_io_engine io_engine)
 {
     switch (io_engine) {

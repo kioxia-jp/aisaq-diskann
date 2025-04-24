@@ -41,12 +41,12 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT int load_from_separate_paths(diskann::MemoryMappedFiles &files, uint32_t num_threads,
                                                    const char *index_filepath, const char *pivots_filepath,
                                                    const char *compressed_filepath,
-                                                   const char *aisaq_deprecated_index_filepath,
-                                                   const struct aisaq_search_config *aisaq_search_config);
+                                                   const char *index_prefix = nullptr,
+                                                   const struct aisaq_search_config *aisaq_search_config = nullptr);
 #else
     DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
                                                    const char *pivots_filepath, const char *compressed_filepath,
-                                                   const char *aisaq_deprecated_index_filepath = nullptr,
+                                                   const char *index_prefix = nullptr,
                                                    const struct aisaq_search_config *aisaq_search_config = nullptr);
 #endif
 
@@ -244,15 +244,24 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     T *_coord_cache_buf = nullptr;
     tsl::robin_map<uint32_t, T *> _coord_cache;
 
+    /* aisaq node cache addition */
     uint8_t *_aisaq_node_cache_buf = nullptr;
     tsl::robin_map<uint32_t, uint8_t *> _aisaq_node_cache;
+    /* aisaq pq vectors reader */
     class aisaqPQReader *_aisaq_pq_vectors_reader = nullptr;
+    /* aisaq static pq cache */
     uint8_t *_aisaq_pq_vectors_cache_buf = nullptr;
     tsl::robin_map<uint32_t, uint8_t *> _aisaq_pq_vectors_cache_map;
     uint64_t _aisaq_pq_vectors_cache_count = 0;
     bool _aisaq_pq_vectors_cache_direct = true;
+    /* aisaq rearranged index */
     bool _aisaq_rearranged_vectors = false;
+    /* aisaq num of inline pq vectors */
     uint32_t _aisaq_inline_pq_vectors = 0;
+    /* aisaq multiple entry points */
+    uint32_t *_aisaq_entry_points = nullptr;
+    size_t _aisaq_num_entry_points = 0;
+    uint8_t *_aisaq_entry_points_pq_vectors_buff = nullptr;
 
     // thread-specific scratch
     ConcurrentQueue<SSDThreadData<T> *> _thread_data;

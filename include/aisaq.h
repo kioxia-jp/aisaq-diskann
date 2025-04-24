@@ -59,9 +59,8 @@ struct aisaq_node_placement {
 };
 
 struct aisaq_search_config {
-    bool aisaq_deprecated;
-    /* OR */
     bool aisaq;
+    bool aisaq_deprecated;
     uint32_t vector_beamwidth;
     enum aisaq_pq_io_engine pq_io_engine;
     uint64_t pq_cache_size;

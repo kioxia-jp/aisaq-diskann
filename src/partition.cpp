@@ -93,7 +93,7 @@ void gen_random_slice(const std::string base_file, const std::string output_pref
 
 template <typename T>
 void gen_random_slice(const std::string data_file, double p_val, float *&sampled_data, size_t &slice_size,
-                      size_t &ndims)
+                      size_t &ndims, std::vector<uint32_t> *sampled_ids)
 {
     size_t npts;
     uint32_t npts32, ndims32;
@@ -124,6 +124,9 @@ void gen_random_slice(const std::string data_file, double p_val, float *&sampled
         float rnd_val = distribution(generator);
         if (rnd_val < p_val)
         {
+            if (sampled_ids) {
+                sampled_ids->push_back(i);
+            }
             std::vector<float> cur_vector_float;
             for (size_t d = 0; d < ndims; d++)
                 cur_vector_float.push_back(cur_vector_T[d]);
@@ -521,14 +524,14 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
 
 template <typename T>
 int partition_with_ram_budget(const std::string data_file, const double sampling_rate, double ram_budget,
-                              size_t graph_degree, const std::string prefix_path, size_t k_base, int min_num_parts)
+                              size_t graph_degree, const std::string prefix_path, size_t k_base)
 {
     size_t train_dim;
     size_t num_train;
     float *train_data_float;
     size_t max_k_means_reps = 10;
 
-    int num_parts = min_num_parts;
+    int num_parts = 3;
     bool fit_in_ram = false;
 
     gen_random_slice<T>(data_file, sampling_rate, train_data_float, num_train, train_dim);
@@ -601,6 +604,50 @@ int partition_with_ram_budget(const std::string data_file, const double sampling
     return num_parts;
 }
 
+template <typename T>
+int partition_calc_kmeans(const std::string &data_file, const std::string &output_file, size_t k)
+{
+    std::ifstream base_reader(data_file, std::ios::binary);
+    uint32_t npts32, ndims32;
+    base_reader.read(reinterpret_cast<char*>(&npts32), sizeof(uint32_t));
+    base_reader.read(reinterpret_cast<char*>(&ndims32), sizeof(uint32_t));
+    base_reader.close();
+
+    std::vector<uint32_t> sampled_ids;
+    size_t train_dim, num_train;
+    float *train_data_float;
+    // Load a sample of the dataset for k-means
+    gen_random_slice<T>(data_file, 0.01, train_data_float, num_train, train_dim, &sampled_ids);
+
+    // Allocate centroids
+    std::vector<float> centroids(k * train_dim);
+    // Perform k-means clustering
+    diskann::cout << "Running k-means with " << k << " clusters..." << std::endl;
+    kmeans::kmeanspp_selecting_pivots(train_data_float, num_train, train_dim, centroids.data(), k);
+    diskann::cout << "Running LLoyds " << k << " clusters..." << std::endl;
+    kmeans::run_lloyds(train_data_float, num_train, train_dim, centroids.data(), k, 10, nullptr, nullptr);
+
+    std::vector<uint32_t> medoids(k);
+    // Parallel computation of medoids
+#pragma omp parallel for schedule(dynamic)
+    for (size_t i = 0; i < k; i++) {
+        float min_dist = std::numeric_limits<float>::max();
+        uint32_t best_idx = 0;
+        float *centroid = centroids.data() + i * train_dim;
+        for (uint32_t j = 0; j < num_train; j++) {
+            float dist = math_utils::calc_distance(train_data_float + (j * train_dim), centroid, train_dim);
+            if (dist < min_dist) {
+                min_dist = dist;
+                best_idx = j;
+            }
+        }
+        medoids[i] = sampled_ids[best_idx];
+    }
+    diskann::save_bin<uint32_t>(output_file.c_str(), medoids.data(), k, 1);
+    delete[] train_data_float;
+    return 0;
+}
+
 // Instantations of supported templates
 
 template void DISKANN_DLLEXPORT gen_random_slice<int8_t>(const std::string base_file, const std::string output_prefix,
@@ -617,12 +664,15 @@ template void DISKANN_DLLEXPORT gen_random_slice<uint8_t>(const uint8_t *inputda
 template void DISKANN_DLLEXPORT gen_random_slice<int8_t>(const int8_t *inputdata, size_t npts, size_t ndims,
                                                          double p_val, float *&sampled_data, size_t &slice_size);
 
-template void DISKANN_DLLEXPORT gen_random_slice<float>(const std::string data_file, double p_val, float *&sampled_data,
-                                                        size_t &slice_size, size_t &ndims);
+template void DISKANN_DLLEXPORT gen_random_slice<float>(const std::string data_file, double p_val,
+                                                        float *&sampled_data, size_t &slice_size, size_t &ndims,
+                                                        std::vector<uint32_t> *sampled_ids);
 template void DISKANN_DLLEXPORT gen_random_slice<uint8_t>(const std::string data_file, double p_val,
-                                                          float *&sampled_data, size_t &slice_size, size_t &ndims);
+                                                          float *&sampled_data, size_t &slice_size, size_t &ndims,
+                                                          std::vector<uint32_t> *sampled_ids);
 template void DISKANN_DLLEXPORT gen_random_slice<int8_t>(const std::string data_file, double p_val,
-                                                         float *&sampled_data, size_t &slice_size, size_t &ndims);
+                                                         float *&sampled_data, size_t &slice_size, size_t &ndims,
+                                                         std::vector<uint32_t> *sampled_ids);
 
 template DISKANN_DLLEXPORT int partition<int8_t>(const std::string data_file, const float sampling_rate,
                                                  size_t num_centers, size_t max_k_means_reps,
@@ -637,15 +687,14 @@ template DISKANN_DLLEXPORT int partition<float>(const std::string data_file, con
 template DISKANN_DLLEXPORT int partition_with_ram_budget<int8_t>(const std::string data_file,
                                                                  const double sampling_rate, double ram_budget,
                                                                  size_t graph_degree, const std::string prefix_path,
-                                                                 size_t k_base, int min_num_parts);
+                                                                 size_t k_base);
 template DISKANN_DLLEXPORT int partition_with_ram_budget<uint8_t>(const std::string data_file,
                                                                   const double sampling_rate, double ram_budget,
                                                                   size_t graph_degree, const std::string prefix_path,
-                                                                  size_t k_base, int min_num_parts);
+                                                                  size_t k_base);
 template DISKANN_DLLEXPORT int partition_with_ram_budget<float>(const std::string data_file, const double sampling_rate,
                                                                 double ram_budget, size_t graph_degree,
-                                                                const std::string prefix_path, size_t k_base,
-                                                                int min_num_parts);
+                                                                const std::string prefix_path, size_t k_base);
 
 template DISKANN_DLLEXPORT int retrieve_shard_data_from_ids<float>(const std::string data_file,
                                                                    std::string idmap_filename,
@@ -656,3 +705,9 @@ template DISKANN_DLLEXPORT int retrieve_shard_data_from_ids<uint8_t>(const std::
 template DISKANN_DLLEXPORT int retrieve_shard_data_from_ids<int8_t>(const std::string data_file,
                                                                     std::string idmap_filename,
                                                                     std::string data_filename);
+template DISKANN_DLLEXPORT int partition_calc_kmeans<float>(const std::string &data_file,
+                                                            const std::string &output_file, size_t k);
+template DISKANN_DLLEXPORT int partition_calc_kmeans<uint8_t>(const std::string &data_file,
+                                                              const std::string &output_file, size_t k);
+template DISKANN_DLLEXPORT int partition_calc_kmeans<int8_t>(const std::string &data_file,
+                                                             const std::string &output_file, size_t k);

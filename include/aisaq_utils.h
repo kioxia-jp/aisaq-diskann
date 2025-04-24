@@ -36,6 +36,8 @@ int aisaq_create_reversed_vectors_map(uint32_t *&reversed_vectors_map,
 */
 uint32_t aisaq_calc_max_inline_pq_vectors(uint32_t max_node_len, uint32_t pq_nbytes, uint32_t max_degree);
 
+int aisaq_rearrange_vectors_file(const std::string &file_path, const uint32_t *rearrange_map, uint32_t map_size);
+
 const char *aisaq_get_io_engine_string(enum aisaq_pq_io_engine io_engine);
 
 /*
