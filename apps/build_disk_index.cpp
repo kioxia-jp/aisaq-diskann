@@ -129,8 +129,8 @@ int main(int argc, char **argv)
         if (vm["use_opq"].as<bool>())
             use_opq = true;
         aisaq_inline_pq_param_set = !vm["inline_pq"].empty();
+        aisaq_rearrange_param_set = !vm["rearrange"].defaulted();
         aisaq_num_entry_points_param_set = !vm["num_entry_points"].empty();
-        aisaq_rearrange_param_set = !vm["rearrange"].empty();
     }
     catch (const std::exception &ex)
     {
@@ -172,8 +172,8 @@ int main(int argc, char **argv)
     if (aisaq) {
         /* validate inline_pq */
         if (aisaq_inline_pq_param_set) {
-            if (aisaq_inline_pq < -1 || aisaq_inline_pq > R) {
-                diskann::cerr << "Error: inline_pq value must be between -1 and R" << std::endl;
+            if (aisaq_inline_pq < -1 || aisaq_inline_pq > (int)R) {
+                diskann::cerr << "Error: inline_pq value, must be between -1 and R" << std::endl;
                 return -1;
             }
         } else {
@@ -181,8 +181,8 @@ int main(int argc, char **argv)
             aisaq_inline_pq = R;
         }
         /* validate num_entry_points */
-        if (aisaq_num_entry_points_param_set && (aisaq_num_entry_points < 1 || aisaq_num_entry_points > 1000)) {
-            diskann::cerr << "Error: num_entry_points value must be between 1 and 1000" << std::endl;
+        if (aisaq_num_entry_points_param_set && (aisaq_num_entry_points < 1 || aisaq_num_entry_points > AISAQ_MAX_ENTRY_POINTS)) {
+            diskann::cerr << "Error: num_entry_points value, must be between 1 and " << AISAQ_MAX_ENTRY_POINTS << std::endl;
             return -1;
         }
     } else {

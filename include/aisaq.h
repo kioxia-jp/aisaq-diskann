@@ -14,6 +14,7 @@ namespace diskann {
 #define AISAQ_SEARCH_PQ_CACHE_DIRECT_THRESHOLD_N      (10 << 20) /* 10m */
 #define AISAQ_SEARCH_PQ_READ_PAGE_CACHE_MAX_DRAM_MB   32.0f /* 32MB per thread */
 #define AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT    diskann::defaults::SECTOR_LEN
+#define AISAQ_MAX_ENTRY_POINTS                        1000
 #define AISAQ_INVALID_VID                             0xffffffff
 
 enum aisaq_rearrange_sorter {
