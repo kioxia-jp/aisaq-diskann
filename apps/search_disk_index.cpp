@@ -158,6 +158,11 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         return res;
     }
 
+    if (_pFlashIndex->get_rearranged_index() && filtered_search) {
+        std::cerr << "search with filter is not supported using aisaq rearranged index" << std::endl;
+        return -1;
+    }
+
     if (num_nodes_to_cache > 0) {
         std::vector<uint32_t> node_list;
         diskann::cout << "Caching " << num_nodes_to_cache << " nodes around medoid(s)" << std::endl;

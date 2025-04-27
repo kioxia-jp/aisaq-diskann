@@ -182,7 +182,7 @@ int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_
         }
         thread_data->aisaq_pq_reader_ctx = _aisaq_pq_vectors_reader->create_context(max_ios, aisaq_search_config.pq_read_page_cache_size);
         if (thread_data->aisaq_pq_reader_ctx == nullptr) {
-            std::cerr << "failed to initialize pq reader context" << std::endl;
+            diskann::cerr << "failed to initialize pq reader context" << std::endl;
             return -1;
         }
         thread_data_list.push(thread_data);
@@ -198,10 +198,11 @@ int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_
             size_t tmp_dim;
             diskann::load_bin<uint32_t>(entry_points_path, _aisaq_entry_points, _aisaq_num_entry_points, tmp_dim);
             assert(tmp_dim == 1);
+            diskann::cout << "aisaq search using " << _aisaq_num_entry_points << " entry points" << std::endl;
             /* allocate memory for entry points pq vectors */
             _aisaq_entry_points_pq_vectors_buff = new uint8_t[_aisaq_num_entry_points * _n_chunks * sizeof(uint8_t)];
             if (_aisaq_entry_points_pq_vectors_buff == nullptr) {
-                std::cerr << "failed to allocate memory for entry points pq vectors" << std::endl;
+                diskann::cerr << "failed to allocate memory for entry points pq vectors" << std::endl;
                 return -1;
             }
             /* thread_data was the last pushed back, use its context */
@@ -210,13 +211,13 @@ int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_
             while (offset < _aisaq_num_entry_points) {
                 uint32_t count = std::min((uint32_t)_aisaq_num_entry_points - offset, max_ios);
                 if (_aisaq_pq_vectors_reader->read_pq_vectors_submit(ctx, _aisaq_entry_points + offset, count, tmp) != 0) {
-                    std::cerr << "failed to read entry points pq vectors" << std::endl;
+                    diskann::cerr << "failed to read entry points pq vectors" << std::endl;
                     return -1;
                 }
                 uint32_t read_vec[count];          /* index array */
                 uint8_t *pq_read_buffers[count];   /* pointers of where the vectors read to */
                 if (_aisaq_pq_vectors_reader->read_pq_vectors_wait_completion(ctx, read_vec, pq_read_buffers, count, count, tmp) != 0) {
-                    std::cerr << "failed to read entry points pq vectors" << std::endl;
+                    diskann::cerr << "failed to read entry points pq vectors" << std::endl;
                     return -1;
                 }
                 for (uint32_t i = 0; i < count; i++) {
@@ -225,7 +226,6 @@ int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_
                 _aisaq_pq_vectors_reader->read_pq_vectors_done(ctx);
                 offset+= count;
             }
-            std::cout << "loaded pq vectors of " << _aisaq_num_entry_points << " entry points" << std::endl;
         }
     }
     return 0;
@@ -2334,6 +2334,7 @@ void PQFlashIndex<T, LabelT>::aisaq_cached_beam_search(const T *query1, const ui
                 compute_dists(&best_medoid, 1, &best_dist, *data->aisaq_pq_reader_ctx, stats);
             } while (false);
         } else {
+            assert(!_aisaq_rearranged_vectors);
             if (_filter_to_medoid_ids.find(filter_label) != _filter_to_medoid_ids.end()) {
                 const auto &medoid_ids = _filter_to_medoid_ids[filter_label];
                 for (uint64_t cur_m = 0; cur_m < medoid_ids.size(); cur_m++) {

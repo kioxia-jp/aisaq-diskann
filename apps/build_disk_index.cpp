@@ -95,7 +95,7 @@ int main(int argc, char **argv)
         optional_configs.add_options()("inline_pq",
                                        po::value<int32_t>(&aisaq_inline_pq),
                                        "set the number of pq vectors to be stored inline as part of the index node, "
-                                       "pass -1 for auto, 0 for none, R for all inline, by default all PQ vectors will be stored inline. "
+                                       "pass -1 for auto, 0 for none, R for all, by default all PQ vectors will be stored inline. "
                                        "valid only with use_aisaq option.");
         optional_configs.add_options()("rearrange",
                                        po::bool_switch(&aisaq_rearrange)->default_value(false),
