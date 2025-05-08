@@ -880,7 +880,7 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
                         const std::string reorder_data_file,
                         const std::string &index_prefix_path,
                         int inline_pq /* control num of inline pq: -1=auto, 0-R=num of inline pq vectors */,
-                        bool rearrange /* enable vectors reaarangement */)
+                        bool rearrange /* enable vectors rearrangement */)
 {
     uint32_t npts, ndims;
 
@@ -1005,7 +1005,7 @@ void create_disk_layout(const std::string base_file, const std::string mem_index
         max_node_len+= inline_pq_vectors * pq_compressed_nbytes;
         if (inline_pq_vectors == width_u32) {
             if (rearrange) {
-                /* ignore reaarange */
+                /* ignore rearrange */
                 diskann::cout << "all pq vectors will be stored inline, ignoring rearrange" << std::endl;
                 rearrange = false;
             } else {

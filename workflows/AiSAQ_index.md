@@ -30,6 +30,7 @@ The additional search arguments are as follows:
 ### Notes
 - Search in non-AiSAQ mode using AiSAQ index is supported.
 - Search using older version of AiSAQ index is supported, older AiSAQ index will be automatically detected.
+- Search with filter using rearranged AiSAQ index is not supported.
 
 Examples
 --------
