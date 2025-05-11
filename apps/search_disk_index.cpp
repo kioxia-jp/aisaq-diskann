@@ -465,13 +465,14 @@ int main(int argc, char **argv)
                                         "valid only with use_aisaq option.");
         optional_configs.add_options()("pq_cache_size",
                                         po::value<std::string>(&aisaq_pq_cache_size_string)->default_value("0"),
-                                       "PQ vectors cache DRAM size, may be specified in B, KB, MB, GB or in % of the total vectors. "
+                                       "PQ vectors cache DRAM size, may be specified in B, KiB, MiB, GiB or in % of the total vectors. "
                                        "you may use B/K/M/G/% suffix to specify this value, if no suffix, specified as the number of vectors "
                                        "(e.g. 0.8%, 0.6G, or 100000). valid only with use_aisaq option.");
         optional_configs.add_options()("pq_read_page_cache_size",
                                        po::value<std::string>(&aisaq_pq_read_page_cache_size_string)->default_value("0"),
-                                       "PQ vectors read page cache DRAM size - per thread, may be specified in B, KB, MB or GB. "
-                                       "you may use B/K/M/G suffix to specify this value, if no suffix, specified in Bytes. "
+                                       "PQ vectors read page cache DRAM size - per thread, may be specified in B, KiB, MiB or GiB, "
+                                       "maximal value is 32MiB. you may use B/K/M/G suffix to specify this value, if no suffix, "
+                                       "specified in Bytes (e.g. 0.012G or 3.5M). "
                                        "applicable only with index that was built with rearrange option. valid only with use_aisaq option.");
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);

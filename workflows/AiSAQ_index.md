@@ -24,8 +24,8 @@ The additional search arguments are as follows:
 1. **--use_aisaq**: Enable AiSAQ search, when enabled, the PQ vectors will be read from the media on demand.
 2. **--pq_read_io_engine** (default is aio): Select IO engine to use for reading the PQ vectors from the media. Supported io-engines are `aio` and `uring`. Valid only with `use_aisaq` option.
 3. **-V (--vector_beamwidth)** (default is 1): The vector beamwidth to be used for search. Value must be <= `W`. Valid only with `use_aisaq` option. 
-4. **--pq_cache_size** (default is 0): PQ vectors cache DRAM size, may be specified in B, KB, MB, GB or in % of the total vectors. You may use B/K/M/G/% suffix to specify this value, if no suffix, specified as the number of vectors (e.g. 0.8%, 0.6G, or 100000). Valid only with `use_aisaq` option.
-5. **--pq_read_page_cache_size** (default is 0): PQ vectors read page cache DRAM size - per thread, may be specified in B, KB, MB or GB. You may use B/K/M/G suffix to specify this value, if no suffix, specified in Bytes. Applicable only with index that was built with `rearrange` option. Valid only with `use_aisaq` option.
+4. **--pq_cache_size** (default is 0): PQ vectors cache DRAM size, may be specified in B, KiB, MiB, GiB or in % of the total vectors. You may use B/K/M/G/% suffix to specify this value, if no suffix, specified as the number of vectors (e.g. 0.8%, 0.6G, or 100000). Valid only with `use_aisaq` option.
+5. **--pq_read_page_cache_size** (default is 0): PQ vectors read page cache DRAM size - per thread, may be specified in B, KiB, MiB or GiB, maximal value is 32MiB. You may use B/K/M/G suffix to specify this value, if no suffix, specified in Bytes (e.g. 0.012G or 3.5M). Applicable only with index that was built with `rearrange` option. Valid only with `use_aisaq` option.
 
 ### Notes
 - Search in non-AiSAQ mode using AiSAQ index is supported.
