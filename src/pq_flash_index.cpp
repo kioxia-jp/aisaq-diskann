@@ -57,8 +57,7 @@ PQFlashIndex<T, LabelT>::PQFlashIndex(std::shared_ptr<AlignedFileReader> &fileRe
     this->_dist_cmp_float.reset(diskann::get_distance_function<float>(metric_to_invoke));
 }
 
-template <typename T, typename LabelT> PQFlashIndex<T, LabelT>::~PQFlashIndex()
-{
+template <typename T, typename LabelT> PQFlashIndex<T, LabelT>::~PQFlashIndex() {
 #ifndef EXEC_ENV_OLS
     if (data != nullptr)
     {
@@ -98,6 +97,22 @@ template <typename T, typename LabelT> PQFlashIndex<T, LabelT>::~PQFlashIndex()
     if (_medoids != nullptr)
     {
         delete[] _medoids;
+    }
+    /* aisaq related */
+    if (_aisaq_node_cache_buf != nullptr) {
+        delete [] _aisaq_node_cache_buf;
+    }
+    if (_aisaq_pq_vectors_reader != nullptr) {
+        delete _aisaq_pq_vectors_reader;
+    }
+    if (_aisaq_pq_vectors_cache_buf != nullptr) {
+        delete [] _aisaq_pq_vectors_cache_buf;
+    }
+    if (_aisaq_entry_points != nullptr) {
+        delete [] _aisaq_entry_points;
+    }
+    if (_aisaq_entry_points_pq_vectors_buff != nullptr) {
+        delete [] _aisaq_entry_points_pq_vectors_buff;
     }
 }
 
