@@ -78,7 +78,7 @@ int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_s
             nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_nnbrs_score, "nhops->nnbrs->score");
             break;
         case aisaq_rearrange_sorter_nhops_score_nnbrs:
-            nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_score_nnbrs, "nhops->score_nnbrs");
+            nodes_sorter.init(rearrange_nodes_sorter::compare_by_nhops_score_nnbrs, "nhops->score->nnbrs");
             break;
         default:
             diskann::cerr << "invalid rearrange sorter" << std::endl;
