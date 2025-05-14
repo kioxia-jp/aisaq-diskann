@@ -182,9 +182,11 @@ int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_
     }
     uint32_t max_ios;
     if (aisaq_search_config.aisaq_deprecated) {
+        /* all-inline, vector_beamwidth value is invalid in this mode, reader is still needed to read the medoid */
         max_ios = 1;
     } else {
-        max_ios = _max_degree * aisaq_search_config.vector_beamwidth;
+        /* some or none inline, minimal number of 16 ios is needed */
+        max_ios = std::max<uint32_t>((_max_degree - _aisaq_inline_pq_vectors) * aisaq_search_config.vector_beamwidth, 16);
     }
     ConcurrentQueue<SSDThreadData<T> *> thread_data_list;
     uint64_t num_sectors_per_node = _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);

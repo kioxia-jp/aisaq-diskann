@@ -9,7 +9,7 @@ The additional build arguments are as follows:
 1. **--use_aisaq**: Enable AiSAQ index build.
 2. **--inline_pq** (default is R, all inline): Set the number of pq vectors to be stored inline as part of the index node, pass `R` value to store all PQ vectors inline, pass -1 to auto select the maximal number of inline PQ vectors that will not have any impact on the index file size. value must be between -1 and `R`. Valid only with `use_aisaq` option.
 3. **--rearrange**: Enable vectors rearrangement during build, when enabled, each vector will be assigned and stored with a new id, in a way that the number of IOs needed to read the PQ vectors during search will be minimal. This option is ignored if all PQ vectors are stored inline. Valid only with `use_aisaq` option.
-4. **--num_entry_points** (default is 0): Number of entry points that should be generated to be used as a search start points. Value must be between 1 and 1000. Valid only with `use_aisaq` option.
+4. **--num_entry_points** (default is none): Number of entry points that should be generated to be used as a search start points. Value must be between 1 and 1000. Valid only with `use_aisaq` option.
 
 ### Notes
 - Unlike older version of AiSAQ, only one index is being built.

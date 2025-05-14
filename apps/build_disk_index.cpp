@@ -105,7 +105,8 @@ int main(int argc, char **argv)
         optional_configs.add_options()("num_entry_points",
                                        po::value<uint32_t>(&aisaq_num_entry_points),
                                        "number of entry points that should be generated to be used as a "
-                                       "search start points. value must be between 1 and 1000. valid only with use_aisaq option.");
+                                       "search start points. value must be between 1 and 1000. by default, "
+                                       "multiple entry points is disabled. valid only with use_aisaq option.");
 
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
