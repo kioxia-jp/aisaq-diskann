@@ -1,5 +1,4 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
-// Copyright (c) 2024 KIOXIA Corporation, All rights reserved.
 // Licensed under the MIT license.
 
 #pragma once
@@ -50,18 +49,12 @@ class FixedChunkPQTable
 
 void aggregate_coords(const std::vector<unsigned> &ids, const uint8_t *all_coords, const uint64_t ndims, uint8_t *out);
 
-void aggregate_coords_aisaq(const std::vector<unsigned> &ids, std::unordered_map<uint32_t, uint8_t *> &data_variable_len, const uint64_t ndims,
-                            uint8_t *out);
-
 void pq_dist_lookup(const uint8_t *pq_ids, const size_t n_pts, const size_t pq_nchunks, const float *pq_dists,
                     std::vector<float> &dists_out);
 
 // Need to replace calls to these with calls to vector& based functions above
 void aggregate_coords(const unsigned *ids, const uint64_t n_ids, const uint8_t *all_coords, const uint64_t ndims,
                       uint8_t *out);
-
-void aggregate_coords_aisaq(const unsigned *ids, const uint64_t n_ids, std::unordered_map<uint32_t, uint8_t *> &data_variable_len, const uint64_t ndims,
-                            uint8_t *out);
 
 void pq_dist_lookup(const uint8_t *pq_ids, const size_t n_pts, const size_t pq_nchunks, const float *pq_dists,
                     float *dists_out);

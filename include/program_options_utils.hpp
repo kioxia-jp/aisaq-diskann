@@ -1,5 +1,4 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
-// Copyright (c) 2024 KIOXIA Corporation, All rights reserved.
 // Licensed under the MIT license.
 
 #pragma once
@@ -78,8 +77,5 @@ const char *UNIVERSAL_LABEL =
     "in the labels file instead of listing all labels for a node.  DiskANN will not automatically assign a "
     "universal label to a node.";
 const char *FILTERED_LBUILD = "Build complexity for filtered points, higher value results in better graphs";
-const char *USE_AISAQ = "Use all in storage ... product quantization (AiSAQ).";
-const char *AISAQ_PQ_BYTES = "Number of PQ bytes of a neighbor vector stored in the index. Only efftctive when --use_aisaq";
-const char *RERANK = "Re-rank search result by full-precision distance.";
 
 } // namespace program_options_utils

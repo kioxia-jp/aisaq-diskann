@@ -1,24 +1,3 @@
-# AiSAQ-DiskANN
-
-
-AiSAQ (All-in-Storage ANNS with Product Quantization) is a DRAM-free method for approximate nearest neighbor search (ANNS). 
-This code forked off from [code for Microsoft DiskANN](https://github.com/Microsoft/DiskANN) algorithm. Currently we support only simple index search described in [our arXiv paper](https://arxiv.org/abs/2404.06004).
-
-The usage of our additional AiSAQ indices is described below:
-
-- [Commandline interface for building and search SSD-based AiSAQ indices](workflows/AiSAQ_index.md)
-
-To cite this project, please use the information below:
-
-```
-@misc{aisaq-diskann,
-    author = {Kento Tatsuno, Daisuke Miyashita},
-    title = {AiSAQ-DiskANN: DRAM-free implementation for ANNS based on DiskANN},
-    url = {https://github.com/KioxiaAmerica/aisaq-diskann},
-    year = {2024}
-} 
-```
-
 # DiskANN
 
 [![DiskANN Main](https://github.com/microsoft/DiskANN/actions/workflows/push-test.yml/badge.svg?branch=main)](https://github.com/microsoft/DiskANN/actions/workflows/push-test.yml)

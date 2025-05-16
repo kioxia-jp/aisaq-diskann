@@ -1,5 +1,4 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
-// Copyright (c) 2024 KIOXIA Corporation, All rights reserved.
 // Licensed under the MIT license.
 
 #pragma once
@@ -26,11 +25,11 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 {
   public:
     DISKANN_DLLEXPORT PQFlashIndex(std::shared_ptr<AlignedFileReader> &fileReader,
-                                   diskann::Metric metric = diskann::Metric::L2, const bool use_aisaq = false);
+                                   diskann::Metric metric = diskann::Metric::L2);
     DISKANN_DLLEXPORT ~PQFlashIndex();
 
 #ifdef EXEC_ENV_OLS
-    DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix, const bool use_aisaq = false);
+    DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix);
 #else
     // load compressed data, and obtains the handle to the disk-resident index
     DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix);
@@ -39,10 +38,10 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT int load_from_separate_paths(diskann::MemoryMappedFiles &files, uint32_t num_threads,
                                                    const char *index_filepath, const char *pivots_filepath,
-                                                   const char *compressed_filepath, const char *aisaq_index_filepath);
+                                                   const char *compressed_filepath);
 #else
     DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                                   const char *pivots_filepath, const char *compressed_filepath, const char *aisaq_index_filepath);
+                                                   const char *pivots_filepath, const char *compressed_filepath);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
@@ -64,23 +63,23 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
-                                              const bool use_reorder_data = false, QueryStats *stats = nullptr, const bool rerank = true);
+                                              const bool use_reorder_data = false, QueryStats *stats = nullptr);
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const bool use_filter, const LabelT &filter_label,
-                                              const bool use_reorder_data = false, QueryStats *stats = nullptr, const bool rerank = true);
+                                              const bool use_reorder_data = false, QueryStats *stats = nullptr);
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const uint32_t io_limit, const bool use_reorder_data = false,
-                                              QueryStats *stats = nullptr, const bool rerank = true);
+                                              QueryStats *stats = nullptr);
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const bool use_filter, const LabelT &filter_label,
                                               const uint32_t io_limit, const bool use_reorder_data = false,
-                                              QueryStats *stats = nullptr, const bool rerank = true);
+                                              QueryStats *stats = nullptr);
 
     DISKANN_DLLEXPORT LabelT get_converted_label(const std::string &filter_label);
 
@@ -105,18 +104,9 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT std::vector<bool> read_nodes(const std::vector<uint32_t> &node_ids,
                                                    std::vector<T *> &coord_buffers,
                                                    std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers);
-    
-    DISKANN_DLLEXPORT std::vector<bool> read_nodes_aisaq(const std::vector<uint32_t> &node_ids,
-                                                         std::vector<T *> &coord_buffers,
-                                                         std::vector<std::pair<uint32_t, uint32_t *>> &nbr_buffers,
-                                                         std::vector<uint8_t *> &pq_vec_buffers
-                                                        );
 
     DISKANN_DLLEXPORT std::vector<std::uint8_t> get_pq_vector(std::uint64_t vid);
-    DISKANN_DLLEXPORT void load_pq_vectors_of_medoids();
     DISKANN_DLLEXPORT uint64_t get_num_points();
-
-    DISKANN_DLLEXPORT void generate_aisaq_index(const std::string aisaq_index_file);
 
   protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
@@ -146,12 +136,6 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // returns region of `node_buf` containing [COORD(T)]
     DISKANN_DLLEXPORT T *offset_to_node_coords(char *node_buf);
 
-    // returns region of `node_buf` containing [PQ_VECTORS_OF_NBRS]
-    DISKANN_DLLEXPORT uint8_t* offset_to_node_pq_nbrs(char *node_buf);
-
-    // return offset of the nodes in the ENTIRE AiSAQ index file
-    DISKANN_DLLEXPORT uint64_t node_offset_in_aisaq_index(uint64_t node_id);
-
     // index info for multi-node sectors
     // nhood of node `i` is in sector: [i / nnodes_per_sector]
     // offset in sector: [(i % nnodes_per_sector) * max_node_len]
@@ -166,8 +150,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // nbrs of node `i` : (unsigned*) (offset + disk_bytes_per_point + 1)
 
     uint64_t _max_node_len = 0;
-    uint64_t _nnodes_per_sector = 0;       // 0 for multi-sector nodes, >0 for multi-node sectors
-    uint64_t _nnodes_aisaq_per_sector = 0; // 0 for multi-sector nodes, >0 for multi-node sectors
+    uint64_t _nnodes_per_sector = 0; // 0 for multi-sector nodes, >0 for multi-node sectors
     uint64_t _max_degree = 0;
 
     // Data used for searching with re-order vectors
@@ -200,12 +183,6 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     uint8_t *data = nullptr;
     uint64_t _n_chunks;
     FixedChunkPQTable _pq_table;
-
-    // PQ data with AiSAQ
-    const bool use_aisaq;
-    std::unordered_map<uint32_t, uint8_t *> pq_medoid_vecs;
-    std::string _aisaq_index_file;
-    std::string _pq_vector_file;
 
     // distance comparator
     std::shared_ptr<Distance<T>> _dist_cmp;

@@ -1,5 +1,4 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
-// Copyright (c) 2024 KIOXIA Corporation, All rights reserved.
 // Licensed under the MIT license.
 
 #include "mkl.h"
@@ -287,22 +286,6 @@ void aggregate_coords(const std::vector<uint32_t> &ids, const uint8_t *all_coord
     }
 }
 
-void aggregate_coords_aisaq(const std::vector<uint32_t> &ids, std::unordered_map<uint32_t, uint8_t *> &data_variable_len, const uint64_t ndims,
-                            uint8_t *out)
-{
-    for (size_t i = 0; i < ids.size(); i++)
-    {
-        uint32_t id = ids[i];
-
-        if (data_variable_len.find(id) == data_variable_len.end()) {
-            throw ANNException("Cannot find PQ vector in the variable length list", -1);
-        }
-
-        uint8_t *pq_vec = data_variable_len[id];
-        memcpy(out + i * ndims, pq_vec, ndims * sizeof(uint8_t));
-    }                              
-}
-
 void pq_dist_lookup(const uint8_t *pq_ids, const size_t n_pts, const size_t pq_nchunks, const float *pq_dists,
                     std::vector<float> &dists_out)
 {
@@ -335,23 +318,6 @@ void aggregate_coords(const uint32_t *ids, const size_t n_ids, const uint8_t *al
     for (size_t i = 0; i < n_ids; i++)
     {
         memcpy(out + i * ndims, all_coords + ids[i] * ndims, ndims * sizeof(uint8_t));
-    }
-}
-
-void aggregate_coords_aisaq(const unsigned *ids, const uint64_t n_ids, std::unordered_map<uint32_t, uint8_t *> &data_variable_len, const uint64_t ndims,
-                            uint8_t *out)
-{
-    const std::vector<uint32_t> ids_vec(ids, ids + n_ids);
-    for (size_t i = 0; i < n_ids; i++)
-    {
-        uint32_t id = ids[i];
-
-        if (data_variable_len.find(id) == data_variable_len.end()) {
-            throw ANNException("Cannot find PQ vector in the variable length list", -1);
-        }
-
-        uint8_t *pq_vec = data_variable_len[id];
-        memcpy(out + i * ndims, pq_vec, ndims * sizeof(uint8_t));
     }
 }
 

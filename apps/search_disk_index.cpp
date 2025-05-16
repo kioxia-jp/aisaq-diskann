@@ -1,5 +1,4 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
-// Copyright (c) 2024 KIOXIA Corporation, All rights reserved.
 // Licensed under the MIT license.
 
 #include "common_includes.h"
@@ -54,7 +53,7 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
                       const uint32_t num_threads, const uint32_t recall_at, const uint32_t beamwidth,
                       const uint32_t num_nodes_to_cache, const uint32_t search_io_limit,
                       const std::vector<uint32_t> &Lvec, const float fail_if_recall_below,
-                      const std::vector<std::string> &query_filters, const bool use_reorder_data = false, const bool use_aisaq = false, const bool rerank = true)
+                      const std::vector<std::string> &query_filters, const bool use_reorder_data = false)
 {
     diskann::cout << "Search parameters: #threads: " << num_threads << ", ";
     if (beamwidth <= 0)
@@ -111,7 +110,7 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
 #endif
 
     std::unique_ptr<diskann::PQFlashIndex<T, LabelT>> _pFlashIndex(
-        new diskann::PQFlashIndex<T, LabelT>(reader, metric, use_aisaq));
+        new diskann::PQFlashIndex<T, LabelT>(reader, metric));
 
     int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str());
 
@@ -233,7 +232,7 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
                 _pFlashIndex->cached_beam_search(query + (i * query_aligned_dim), recall_at, L,
                                                  query_result_ids_64.data() + (i * recall_at),
                                                  query_result_dists[test_id].data() + (i * recall_at),
-                                                 optimized_beamwidth, use_reorder_data, stats + i, rerank);
+                                                 optimized_beamwidth, use_reorder_data, stats + i);
             }
             else
             {
@@ -322,8 +321,6 @@ int main(int argc, char **argv)
     std::vector<uint32_t> Lvec;
     bool use_reorder_data = false;
     float fail_if_recall_below = 0.0f;
-    bool use_aisaq = false;
-    bool rerank = true;
 
     po::options_description desc{
         program_options_utils::make_program_description("search_disk_index", "Searches on-disk DiskANN indexes")};
@@ -378,11 +375,6 @@ int main(int argc, char **argv)
         optional_configs.add_options()("fail_if_recall_below",
                                        po::value<float>(&fail_if_recall_below)->default_value(0.0f),
                                        program_options_utils::FAIL_IF_RECALL_BELOW);
-        optional_configs.add_options()("use_aisaq", po::bool_switch()->default_value(false),
-                                       program_options_utils::USE_AISAQ);
-        optional_configs.add_options()("no_rerank", po::bool_switch()->default_value(false),
-                                       program_options_utils::RERANK);
-        
 
         // Merge required and optional parameters
         desc.add(required_configs).add(optional_configs);
@@ -397,12 +389,6 @@ int main(int argc, char **argv)
         po::notify(vm);
         if (vm["use_reorder_data"].as<bool>())
             use_reorder_data = true;
-
-        if (vm["use_aisaq"].as<bool>())
-            use_aisaq = true;
-
-        if (vm["no_rerank"].as<bool>())
-            rerank = false;
     }
     catch (const std::exception &ex)
     {
@@ -428,11 +414,6 @@ int main(int argc, char **argv)
         std::cout << "Unsupported distance function. Currently only L2/ Inner "
                      "Product/Cosine are supported."
                   << std::endl;
-        return -1;
-    }
-
-    if ((num_nodes_to_cache > 0 || filter_label != "" || use_reorder_data) && use_aisaq) {
-        std::cout << "AiSAQ currently does not support node caching, filtering or reordering." << std::endl;
         return -1;
     }
 
@@ -473,15 +454,15 @@ int main(int argc, char **argv)
             if (data_type == std::string("float"))
                 return search_disk_index<float, uint16_t>(
                     metric, index_path_prefix, result_path_prefix, query_file, gt_file, num_threads, K, W,
-                    num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data, use_aisaq);
+                    num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data);
             else if (data_type == std::string("int8"))
                 return search_disk_index<int8_t, uint16_t>(
                     metric, index_path_prefix, result_path_prefix, query_file, gt_file, num_threads, K, W,
-                    num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data, use_aisaq);
+                    num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data);
             else if (data_type == std::string("uint8"))
                 return search_disk_index<uint8_t, uint16_t>(
                     metric, index_path_prefix, result_path_prefix, query_file, gt_file, num_threads, K, W,
-                    num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data, use_aisaq);
+                    num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data);
             else
             {
                 std::cerr << "Unsupported data type. Use float or int8 or uint8" << std::endl;
@@ -493,15 +474,15 @@ int main(int argc, char **argv)
             if (data_type == std::string("float"))
                 return search_disk_index<float>(metric, index_path_prefix, result_path_prefix, query_file, gt_file,
                                                 num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec,
-                                                fail_if_recall_below, query_filters, use_reorder_data, use_aisaq, rerank);
+                                                fail_if_recall_below, query_filters, use_reorder_data);
             else if (data_type == std::string("int8"))
                 return search_disk_index<int8_t>(metric, index_path_prefix, result_path_prefix, query_file, gt_file,
                                                  num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec,
-                                                 fail_if_recall_below, query_filters, use_reorder_data, use_aisaq, rerank);
+                                                 fail_if_recall_below, query_filters, use_reorder_data);
             else if (data_type == std::string("uint8"))
                 return search_disk_index<uint8_t>(metric, index_path_prefix, result_path_prefix, query_file, gt_file,
                                                   num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec,
-                                                  fail_if_recall_below, query_filters, use_reorder_data, use_aisaq, rerank);
+                                                  fail_if_recall_below, query_filters, use_reorder_data);
             else
             {
                 std::cerr << "Unsupported data type. Use float or int8 or uint8" << std::endl;
