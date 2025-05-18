@@ -262,6 +262,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     uint32_t *_aisaq_entry_points = nullptr;
     size_t _aisaq_num_entry_points = 0;
     uint8_t *_aisaq_entry_points_pq_vectors_buff = nullptr;
+    /* medoids pq vectors */
+    uint8_t *_aisaq_medoids_pq_vectors_buff = nullptr;
 
     // thread-specific scratch
     ConcurrentQueue<SSDThreadData<T> *> _thread_data;

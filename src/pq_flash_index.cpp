@@ -114,6 +114,9 @@ template <typename T, typename LabelT> PQFlashIndex<T, LabelT>::~PQFlashIndex() 
     if (_aisaq_entry_points_pq_vectors_buff != nullptr) {
         delete [] _aisaq_entry_points_pq_vectors_buff;
     }
+    if (_aisaq_medoids_pq_vectors_buff != nullptr) {
+        delete [] _aisaq_medoids_pq_vectors_buff;
+    }
 }
 
 template <typename T, typename LabelT> inline uint64_t PQFlashIndex<T, LabelT>::get_node_sector(uint64_t node_id)
@@ -162,6 +165,31 @@ void PQFlashIndex<T, LabelT>::setup_thread_data(uint64_t nthreads, uint64_t visi
     _load_flag = true;
 }
 
+static int aisaq_read_pq_vectors(class aisaqPQReader &aisaq_pq_vectors_reader, aisaqPQReaderContext &ctx,
+        uint32_t max_ios, uint32_t *ids, uint32_t n_vectors, uint32_t vector_size, uint8_t *pq_vectors)
+{
+    uint32_t offset = 0, count, tmp;
+    while (offset < n_vectors) {
+        count = std::min((uint32_t)n_vectors - offset, max_ios);
+        if (aisaq_pq_vectors_reader.read_pq_vectors_submit(ctx, ids + offset, count, tmp) != 0) {
+            diskann::cerr << "failed to read pq vectors" << std::endl;
+            return -1;
+        }
+        uint32_t read_vec[count];          /* index array */
+        uint8_t *pq_read_buffers[count];   /* pointers of where the vectors read to */
+        if (aisaq_pq_vectors_reader.read_pq_vectors_wait_completion(ctx, read_vec, pq_read_buffers, count, count, tmp) != 0) {
+            diskann::cerr << "failed to read pq vectors" << std::endl;
+            return -1;
+        }
+        for (uint32_t i = 0; i < count; i++) {
+            memcpy(pq_vectors + ((offset + read_vec[i]) * vector_size), pq_read_buffers[i], vector_size);
+        }
+        aisaq_pq_vectors_reader.read_pq_vectors_done(ctx);
+        offset+= count;
+    }
+    return 0;
+}
+
 template <typename T, typename LabelT>
 int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_search_config, const char *index_prefix)
 {
@@ -169,46 +197,38 @@ int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_
         /* nothing todo */
         return 0;
     }
-    std::string pq_file_path;
-    if (_aisaq_rearranged_vectors) {
-        pq_file_path = std::string(index_prefix) + "_pq_compressed_rearranged.bin";
-    } else {
-        pq_file_path = std::string(index_prefix) + "_pq_compressed.bin";
-    }
+    std::string pq_file_path = _aisaq_rearranged_vectors ?
+            (std::string(index_prefix) + "_pq_compressed_rearranged.bin") :
+            (std::string(index_prefix) + "_pq_compressed.bin");
+
     _aisaq_pq_vectors_reader = aisaqPQReader::create_reader(aisaq_search_config.pq_io_engine,
                                                 pq_file_path.c_str(), _aisaq_rearranged_vectors);
     if (_aisaq_pq_vectors_reader == nullptr) {
         return -1;
     }
-    uint32_t max_ios;
-    if (aisaq_search_config.aisaq_deprecated) {
-        /* all-inline, vector_beamwidth value is invalid in this mode, reader is still needed to read the medoid */
-        max_ios = 1;
-    } else {
-        /* some or none inline, minimal number of 16 ios is needed */
-        max_ios = std::max<uint32_t>((_max_degree - _aisaq_inline_pq_vectors) * aisaq_search_config.vector_beamwidth, 16);
+    /* create local read context */
+    uint32_t max_ios = 256;
+    aisaqPQReaderContext *ctx = _aisaq_pq_vectors_reader->create_context(max_ios, 0);
+    if (ctx == nullptr) {
+        diskann::cerr << "failed to initialize temp pq reader context" << std::endl;
+        return -1;
     }
-    ConcurrentQueue<SSDThreadData<T> *> thread_data_list;
-    uint64_t num_sectors_per_node = _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
-    SSDThreadData<T> *thread_data;
-    while (!this->_thread_data.empty()) {
-        thread_data = this->_thread_data.pop();
-        thread_data->aisaq_max_read_nodes = defaults::MAX_N_SECTOR_READS / num_sectors_per_node;
-        for (uint32_t i = 0; i < thread_data->aisaq_max_read_nodes; i++) {
-            thread_data->aisaq_scratch_mem_offset.push_back(num_sectors_per_node * i * defaults::SECTOR_LEN);
-        }
-        thread_data->aisaq_pq_reader_ctx = _aisaq_pq_vectors_reader->create_context(max_ios, aisaq_search_config.pq_read_page_cache_size);
-        if (thread_data->aisaq_pq_reader_ctx == nullptr) {
-            diskann::cerr << "failed to initialize pq reader context" << std::endl;
-            return -1;
-        }
-        thread_data_list.push(thread_data);
+    /* allocate memory for medoids pq vectors */
+    _aisaq_medoids_pq_vectors_buff = new uint8_t[_num_medoids * _n_chunks * sizeof(uint8_t)];
+    if (_aisaq_medoids_pq_vectors_buff == nullptr) {
+        diskann::cerr << "failed to allocate memory for medoids pq vectors" << std::endl;
+        _aisaq_pq_vectors_reader->destroy_context(*ctx);
+        return -1;
     }
-    while (!thread_data_list.empty()) {
-        thread_data = thread_data_list.pop();
-        this->_thread_data.push(thread_data);
+    /* load medoids pq vectors from media */
+    if (aisaq_read_pq_vectors(*_aisaq_pq_vectors_reader, *ctx, max_ios, _medoids, _num_medoids,
+                            _n_chunks * sizeof(uint8_t), _aisaq_medoids_pq_vectors_buff) != 0) {
+        diskann::cerr << "failed to read medoids pq vectors" << std::endl;
+        _aisaq_pq_vectors_reader->destroy_context(*ctx);
+        return -1;
     }
-    if (aisaq_search_config.aisaq && !aisaq_search_config.aisaq_deprecated) {
+    /* handle multiple rntry points */
+    if (!aisaq_search_config.aisaq_deprecated) {
         std::string entry_points_path = std::string(index_prefix) + "_disk.index_entry_points.bin";
         if (file_exists(entry_points_path)) {
             /* load entry points pq vectors */
@@ -220,30 +240,46 @@ int PQFlashIndex<T, LabelT>::aisaq_init(const struct aisaq_search_config &aisaq_
             _aisaq_entry_points_pq_vectors_buff = new uint8_t[_aisaq_num_entry_points * _n_chunks * sizeof(uint8_t)];
             if (_aisaq_entry_points_pq_vectors_buff == nullptr) {
                 diskann::cerr << "failed to allocate memory for entry points pq vectors" << std::endl;
+                _aisaq_pq_vectors_reader->destroy_context(*ctx);
                 return -1;
             }
-            /* thread_data was the last pushed back, use its context */
-            aisaqPQReaderContext &ctx = *thread_data->aisaq_pq_reader_ctx;
-            uint32_t offset = 0, tmp;
-            while (offset < _aisaq_num_entry_points) {
-                uint32_t count = std::min((uint32_t)_aisaq_num_entry_points - offset, max_ios);
-                if (_aisaq_pq_vectors_reader->read_pq_vectors_submit(ctx, _aisaq_entry_points + offset, count, tmp) != 0) {
-                    diskann::cerr << "failed to read entry points pq vectors" << std::endl;
-                    return -1;
-                }
-                uint32_t read_vec[count];          /* index array */
-                uint8_t *pq_read_buffers[count];   /* pointers of where the vectors read to */
-                if (_aisaq_pq_vectors_reader->read_pq_vectors_wait_completion(ctx, read_vec, pq_read_buffers, count, count, tmp) != 0) {
-                    diskann::cerr << "failed to read entry points pq vectors" << std::endl;
-                    return -1;
-                }
-                for (uint32_t i = 0; i < count; i++) {
-                    memcpy(_aisaq_entry_points_pq_vectors_buff + ((offset + read_vec[i]) * _n_chunks * sizeof(uint8_t)), pq_read_buffers[i], _n_chunks * sizeof(uint8_t));
-                }
-                _aisaq_pq_vectors_reader->read_pq_vectors_done(ctx);
-                offset+= count;
+            if (aisaq_read_pq_vectors(*_aisaq_pq_vectors_reader, *ctx, max_ios, _aisaq_entry_points, _aisaq_num_entry_points,
+                                    _n_chunks * sizeof(uint8_t), _aisaq_entry_points_pq_vectors_buff) != 0) {
+                diskann::cerr << "failed to read entry points pq vectors" << std::endl;
+                _aisaq_pq_vectors_reader->destroy_context(*ctx);
+                return -1;
             }
         }
+    }
+    _aisaq_pq_vectors_reader->destroy_context(*ctx);
+
+    if (!aisaq_search_config.aisaq_deprecated && _aisaq_inline_pq_vectors < _max_degree) {
+        /* some or none inline, minimal number of 16 ios is needed */
+        max_ios = (_max_degree - _aisaq_inline_pq_vectors) * aisaq_search_config.vector_beamwidth;
+    } else {
+        max_ios = 0;
+    }
+    ConcurrentQueue<SSDThreadData<T> *> thread_data_list;
+    uint64_t num_sectors_per_node = _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
+    SSDThreadData<T> *thread_data;
+    while (!this->_thread_data.empty()) {
+        thread_data = this->_thread_data.pop();
+        thread_data->aisaq_max_read_nodes = defaults::MAX_N_SECTOR_READS / num_sectors_per_node;
+        for (uint32_t i = 0; i < thread_data->aisaq_max_read_nodes; i++) {
+            thread_data->aisaq_scratch_mem_offset.push_back(num_sectors_per_node * i * defaults::SECTOR_LEN);
+        }
+        if (max_ios > 0) {
+            thread_data->aisaq_pq_reader_ctx = _aisaq_pq_vectors_reader->create_context(max_ios, aisaq_search_config.pq_read_page_cache_size);
+            if (thread_data->aisaq_pq_reader_ctx == nullptr) {
+                diskann::cerr << "failed to initialize pq reader context" << std::endl;
+                return -1;
+            }
+        }
+        thread_data_list.push(thread_data);
+    }
+    while (!thread_data_list.empty()) {
+        thread_data = thread_data_list.pop();
+        this->_thread_data.push(thread_data);
     }
     return 0;
 }
@@ -2255,6 +2291,7 @@ void PQFlashIndex<T, LabelT>::aisaq_cached_beam_search(const T *query1, const ui
     auto compute_dists = [this, pq_coord_scratch, pq_dists](const uint32_t *ids, const uint64_t n_ids,
                                     float *dists_out, aisaqPQReaderContext &ctx, QueryStats *stats
     ) {
+        assert(_aisaq_pq_vectors_reader != nullptr);
         Timer timer;
         timer.reset();
         uint32_t io_count;
@@ -2330,47 +2367,33 @@ void PQFlashIndex<T, LabelT>::aisaq_cached_beam_search(const T *query1, const ui
             offset+= count;
         }
     } else {
+        assert(_aisaq_medoids_pq_vectors_buff != nullptr);
         if (!use_filter) {
-            for (uint64_t cur_m = 0; cur_m < _num_medoids; cur_m++) {
+            uint32_t best_medoid_index = 0;
+            for (uint32_t cur_m = 0; cur_m < _num_medoids; cur_m++) {
                 float cur_expanded_dist =
                     _dist_cmp_float->compare(query_float, _centroid_data + _aligned_dim * cur_m, (uint32_t)_aligned_dim);
                 if (cur_expanded_dist < best_dist) {
-                    best_medoid = _medoids[cur_m];
+                    best_medoid_index = cur_m;
                     best_dist = cur_expanded_dist;
                 }
             }
             /* now calc best_medoid distance in pq space */
-            do {
-                uint8_t *pqvb = aisaq_pq_cache_lookup(best_medoid);
-                if (pqvb != nullptr) {
-                    /* in cache, no need to read, just calc pq distance */
-                    diskann::pq_dist_lookup(pqvb, 1,_n_chunks, pq_dists, &best_dist);
-                    break;
-                }
-                /* read and calc pq distance */
-                compute_dists(&best_medoid, 1, &best_dist, *data->aisaq_pq_reader_ctx, stats);
-            } while (false);
+            best_medoid = _medoids[best_medoid_index];
+            diskann::pq_dist_lookup(_aisaq_medoids_pq_vectors_buff + (best_medoid_index * _n_chunks * sizeof(uint8_t)),
+                                    1,_n_chunks, pq_dists, &best_dist);
         } else {
             assert(!_aisaq_rearranged_vectors);
             if (_filter_to_medoid_ids.find(filter_label) != _filter_to_medoid_ids.end()) {
                 const auto &medoid_ids = _filter_to_medoid_ids[filter_label];
-                for (uint64_t cur_m = 0; cur_m < medoid_ids.size(); cur_m++) {
+                for (uint32_t cur_m = 0; cur_m < medoid_ids.size(); cur_m++) {
                     // for filtered index, we don't store global centroid data as for unfiltered index, so we use PQ distance
                     // as approximation to decide closest medoid matching the query filter.
-                    do {
-                        uint8_t *pqvb = aisaq_pq_cache_lookup(medoid_ids[cur_m]);
-                        if (pqvb != nullptr) {
-                            /* in cache, no need to read, just calc pq distance */
-                            diskann::pq_dist_lookup(pqvb, 1,_n_chunks, pq_dists, dist_scratch);
-                            break;
-                        }
-                        /* read and calc pq distance */
-                        compute_dists(&medoid_ids[cur_m], 1, dist_scratch, *data->aisaq_pq_reader_ctx, stats);
-                    } while (false);
-                    float cur_expanded_dist = dist_scratch[0];
-                    if (cur_expanded_dist < best_dist) {
+                    diskann::pq_dist_lookup(_aisaq_medoids_pq_vectors_buff + (cur_m * _n_chunks * sizeof(uint8_t)),
+                                            1,_n_chunks, pq_dists, dist_scratch);
+                    if (dist_scratch[0] < best_dist) {
                         best_medoid = medoid_ids[cur_m];
-                        best_dist = cur_expanded_dist;
+                        best_dist = dist_scratch[0];
                     }
                 }
             } else {
