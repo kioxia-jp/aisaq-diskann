@@ -66,18 +66,18 @@ void execute_io(io_context_t ctx, int fd, std::vector<AlignedRead> &read_reqs, u
             else
             {
                 // wait on io_getevents
-                ret = io_getevents(ctx, (int64_t)n_ops, (int64_t)n_ops, evts.data(), nullptr);
-                // if requests didn't complete
-                if (ret != (int64_t)n_ops)
-                {
-                    std::cerr << "io_getevents() failed; returned " << ret << ", expected=" << n_ops
-                              << ", ernno=" << errno << "=" << ::strerror(-ret) << ", try #" << n_tries + 1;
-                    exit(-1);
-                }
-                else
-                {
-                    break;
-                }
+                uint32_t remaining = n_ops;
+                do {
+                    ret = io_getevents(ctx, (int64_t)remaining, (int64_t)remaining, evts.data(), nullptr);
+                    // if requests didn't complete
+                    if (ret <= 0) {
+                        std::cerr << "io_getevents() failed; returned " << ret << ", expected=" << remaining
+                                  << ", ernno=" << errno << "=" << ::strerror(-ret) << ", try #" << n_tries + 1 << std::endl;
+                        exit(-1);
+                    }
+                    remaining-= ret;
+                } while (remaining > 0);
+                break;
             }
         }
         // disabled since req.buf could be an offset into another buf
