@@ -1,36 +1,36 @@
 **Usage for AiSAQ indices**
 ===========================
 
-To generate AiSAQ-index, use the `apps/build_disk_index` program.
+To generate an AiSAQ-index, use the `apps/build_disk_index` program.
 -----------------------------------------------------------------
 
 The additional build arguments are as follows:
 
 1. **--use_aisaq**: Enable AiSAQ index build.
-2. **--inline_pq** (default is R, all inline): Set the number of pq vectors to be stored inline as part of the index node, pass `R` value to store all PQ vectors inline, pass -1 to auto select the maximal number of inline PQ vectors that will not have any impact on the index file size. value must be between -1 and `R`. Valid only with `use_aisaq` option.
-3. **--rearrange**: Enable vectors rearrangement during build, when enabled, each vector will be assigned and stored with a new id, in a way that the number of IOs needed to read the PQ vectors during search will be minimal. This option is ignored if all PQ vectors are stored inline. Valid only with `use_aisaq` option.
-4. **--num_entry_points** (default is none): Number of entry points that should be generated to be used as a search start points. Value must be between 1 and 1000. Valid only with `use_aisaq` option.
+2. **--inline_pq** (default is R, all inline): Set the number of pq vectors to be stored inline as part of the index node. Pass the value `R` to store all PQ vectors inline, or pass -1 to automatically select the maximum number of inline PQ vectors that do not impact the index file size. The value must be between -1 and `R`. This option is valid only when the `use_aisaq` option is enabled.
+3. **--rearrange**: Enable vectors rearrangement during the build. When this option is enabled, each vector is assigned a new ID and stored in a manner that minimizes the number of I/O operations needed to read the PQ vectors during a search. This option is ignored if all PQ vectors are stored inline, and it is valid only when the `use_aisaq` option is enabled.
+4. **--num_entry_points** (default is none): Number of entry points used as start points during a search. Value must be between 1 and 1000. This option does not have any impact on existing medoid/s generation and valid only when the `use_aisaq` option is enabled.
 
 ### Notes
-- Unlike older version of AiSAQ, only one index is being built.
-- A private case in which all PQ vectors are stored inline is similar to the older version of AiSAQ index.
-- There is no conversion tool from non-AiSAQ index to AiSAQ index.
+- When the 'use_aisaq' option is enabled, only an AiSAQ index is generated (a DiskANN index is not generated).
+- When only the `use-aisaq` option is enabled, the configuration of index is identical to the one generated with older version (tag 0.1.0)
+- A tool to convert from DiskANN index to AiSAQ one is not delivered.
 
-To search AiSAQ-index, use the `apps/search_disk_index` program.
+To search with AiSAQ-index, use the `apps/search_disk_index` program.
 --------------------------------------------------------------------
 
 The additional search arguments are as follows:
 
-1. **--use_aisaq**: Enable AiSAQ search, when enabled, the PQ vectors will be read from the media on demand.
-2. **--pq_read_io_engine** (default is aio): Select IO engine to use for reading the PQ vectors from the media. Supported io-engines are `aio` and `uring`. Valid only with `use_aisaq` option.
-3. **-V (--vector_beamwidth)** (default is 1): The vector beamwidth to be used for search. Value must be <= `W`. Valid only with `use_aisaq` option. 
-4. **--pq_cache_size** (default is 0): PQ vectors cache DRAM size, may be specified in B, KiB, MiB, GiB or in % of the total vectors. You may use B/K/M/G/% suffix to specify this value, if no suffix, specified as the number of vectors (e.g. 0.8%, 0.6G, or 100000). Valid only with `use_aisaq` option.
-5. **--pq_read_page_cache_size** (default is 0): PQ vectors read page cache DRAM size - per thread, may be specified in B, KiB, MiB or GiB, maximal value is 32MiB. You may use B/K/M/G suffix to specify this value, if no suffix, specified in Bytes (e.g. 0.012G or 3.5M). Applicable only with index that was built with `rearrange` option. Valid only with `use_aisaq` option.
+1. **--use_aisaq**: Enable AiSAQ search; the PQ vectors read from the media on demand.
+2. **--pq_read_io_engine** (default is aio): Select IO engine to use for reading the PQ vectors from the media. Supported io-engines are `aio` and `uring`. This option is valid only when the `use_aisaq` option is enabled.
+3. **-V (--vector_beamwidth)** (default is 1): The vector beamwidth to be used for a search. Value must be <= `W`. This option is valid only when the `use_aisaq` option is enabled.
+4. **--pq_cache_size** (default is 0): Specify the DRAM size for caching PQ vectors in B, KiB, MiB, GiB or as a percentage of the total vectors. You may use the B/K/M/G/% suffix to indicate this value. If no suffix is provided, the value is interpreted as the number of vectors (e.g. 0.8%, 0.6G, or 100000). This option is valid only when the `use_aisaq` option is enabled.
+5. **--pq_read_page_cache_size** (default is 0): Specify the DRAM size for read page cache per thread in B, KiB, MiB or GiB. The maximum is 32MiB. You may use the B/K/M/G suffix to indicate this value. If no suffix is provided, the value is interpreted in Bytes (e.g. 0.012G or 3.5M). Applicable only to indices built with `rearrange` option. This option is valid only when the `use_aisaq` option is enabled.
 
 ### Notes
-- Search in non-AiSAQ mode using AiSAQ index is supported.
-- Search using older version of AiSAQ index is supported, older AiSAQ index will be automatically detected.
-- Search with filter using rearranged AiSAQ index is not supported.
+- Searching in non-AiSAQ mode using AiSAQ index is supported by not specifying `use_aisaq` option
+- Searching using AiSAQ index generated with older version (tag 0.1.0) is supported. The version of the AiSAQ index is automatically detected.
+- Searching with filter using a rearranged AiSAQ index is not supported.
 
 Examples
 --------
@@ -78,7 +78,7 @@ Search AiSAQ index with vector-beamwidth of 2, use uring io engine to read the P
 ```
 
 Search AiSAQ index using default search parameters.
-Note that index that was built with older version of AiSAQ will be automatically detected.
+Note that index generated with older version (tag 0.1.0) of AiSAQ is automatically detected.
 
 ```bash
 ./apps/search_disk_index --data_type float --dist_fn l2 \

@@ -6,13 +6,13 @@ This code was forked from [code for Microsoft DiskANN](https://github.com/Micros
 
 ### AiSAQ-DiskANN includes the following enhancements:
 1. Scalable & DRAM-free search - The PQ vectors are not loaded into DRAM during disk-index-search, instead they are being read from the media on demand.
-2. Inline PQ vectors - Some or all PQ vectors may be stored as part of the index node, saving IOs during search.
-3. Vectors rearrangement - Optimal rearrangement of the vectors in a way that the number of IOs needed to read the PQ vectors from the media during search will be minimal.
-4. Multiple entry points - Generate multiple entry points to minimize the number of search iterations. 
-5. Vector beamwidth - Tune the number of nodes that are expended on each greedy search iteration, this will parallelize PQ vectors read IOs.
+2. Inline PQ vectors - Some or all PQ vectors can be stored as part of the index node, which saves I/O operations during during a search.
+3. Vectors rearrangement - An optimal rearrangement of the vectors to minimize the number of I/O operations required to read the PQ vectors from the media during a search.
+4. Multiple entry points - Generate multiple entry points to minimize the number of search iterations.
+5. Vector beamwidth - Tune the number of nodes used in each greedy search iteration; this parallelizes the I/O operations for reading PQ vectors.
 6. Greedy search algorithm improvements.
-7. Static PQ vectors cache - Common static cache of PQ vectors, populated during load prior search.
-8. Dynamic PQ vectors read cache - A dynamic page level read cache of PQ vectors, managed per-thread using LRU eviction policy.
+7. Static PQ vectors cache - A common static cache of PQ vectors, which is populated during the loading phase before the search.
+8. Dynamic PQ vectors read cache - A dynamic page level read cache of PQ vectors, which is managed per-thread using LRU eviction policy.
 
 The usage of our additional AiSAQ indices is described below:
 
@@ -55,7 +55,7 @@ sysctl -p /etc/sysctl.conf
 
 
 DiskANN is a suite of scalable, accurate and cost-effective approximate nearest neighbor search algorithms for large-scale vector search that support real-time changes and simple filters.
-This code is based on ideas from the [DiskANN](https://papers.nips.cc/paper/9527-rand-nsg-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node.pdf), [Fresh-DiskANN](https://arxiv.org/abs/2105.09613) and the [Filtered-DiskANN](https://harsha-simhadri.org/pubs/Filtered-DiskANN23.pdf) papers with further improvements. 
+This code is based on ideas from the [DiskANN](https://papers.nips.cc/paper/9527-rand-nsg-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node.pdf), [Fresh-DiskANN](https://arxiv.org/abs/2105.09613) and the [Filtered-DiskANN](https://harsha-simhadri.org/pubs/Filtered-DiskANN23.pdf) papers with further improvements.
 This code forked off from [code for NSG](https://github.com/ZJULearning/nsg) algorithm.
 
 This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
@@ -94,21 +94,21 @@ mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j
 
 ## Windows build:
 
-The Windows version has been tested with Enterprise editions of Visual Studio 2022, 2019 and 2017. It should work with the Community and Professional editions as well without any changes. 
+The Windows version has been tested with Enterprise editions of Visual Studio 2022, 2019 and 2017. It should work with the Community and Professional editions as well without any changes.
 
 **Prerequisites:**
 
 * CMake 3.15+ (available in VisualStudio 2019+ or from https://cmake.org)
 * NuGet.exe (install from https://www.nuget.org/downloads)
-    * The build script will use NuGet to get MKL, OpenMP and Boost packages.
+* The build script will use NuGet to get MKL, OpenMP and Boost packages.
 * DiskANN git repository checked out together with submodules. To check out submodules after git clone:
 ```
 git submodule init
 git submodule update
 ```
 
-* Environment variables: 
-    * [optional] If you would like to override the Boost library listed in windows/packages.config.in, set BOOST_ROOT to your Boost folder.
+* Environment variables:
+* [optional] If you would like to override the Boost library listed in windows/packages.config.in, set BOOST_ROOT to your Boost folder.
 
 **Build steps:**
 * Open the "x64 Native Tools Command Prompt for VS 2019" (or corresponding version) and change to DiskANN folder
@@ -137,8 +137,8 @@ msbuild.exe diskann.sln /m /nologo /t:Build /p:Configuration="Release" /property
 
 Please see the following pages on using the compiled code:
 
-- [Commandline interface for building and search SSD based indices](workflows/SSD_index.md)  
-- [Commandline interface for building and search in memory indices](workflows/in_memory_index.md) 
+- [Commandline interface for building and search SSD based indices](workflows/SSD_index.md)
+- [Commandline interface for building and search in memory indices](workflows/in_memory_index.md)
 - [Commandline examples for using in-memory streaming indices](workflows/dynamic_index.md)
 - [Commandline interface for building and search in memory indices with label data and filters](workflows/filtered_in_memory.md)
 - [Commandline interface for building and search SSD based indices with label data and filters](workflows/filtered_ssd_index.md)
